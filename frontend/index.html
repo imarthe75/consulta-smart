@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="es-MX">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ConsultaRPP - Sistema de Consultas Legales</title>
+    <meta name="description"
+        content="Chatbot inteligente para consultas sobre trámites, requisitos y costos en el Registro Público de la Propiedad">
+    <link rel="icon" href="/src/assets/favicon.svg" type="image/svg+xml">
+    <script>
+        // Limpiar localStorage si hay un token muy corto o corrupto
+        try {
+            const token = localStorage.getItem('token');
+            if (token && token.length < 20) {
+                console.warn('Token corrupto detectado, limpiando localStorage...');
+                localStorage.clear();
+            }
+        } catch (e) {
+            console.error('Error al acceder localStorage:', e);
+        }
+
+        // Manejo global de errores JavaScript
+        window.addEventListener('error', (e) => {
+            console.error('Error en la página:', e.message);
+        });
+    </script>
+</head>
+
+<body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+</body>
+
+</html>

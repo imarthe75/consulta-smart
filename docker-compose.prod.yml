@@ -1,0 +1,306 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database (Production)
+  db:
+    image: postgres:15-alpine
+    container_name: consulta-rpp-db-prod
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-consulta_rpp_prod}
+      POSTGRES_USER: ${POSTGRES_USER:-consulta_rpp_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "-c max_connections=200 -c shared_buffers=256MB -c effective_cache_size=1GB"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./db/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./data/backups:/backups
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-consulta_rpp_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - consulta-rpp-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis Cache (Production)
+  redis:
+    image: redis:7-alpine
+    container_name: consulta-rpp-redis-prod
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - ./data/redis:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - consulta-rpp-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # SeaweedFS Master (Production)
+  seaweedfs-master:
+    image: chrislusf/seaweedfs:latest
+    container_name: consulta-rpp-seaweedfs-master-prod
+    command: master -ip=seaweedfs-master -port=9333
+    ports:
+      - "9333:9333"
+    volumes:
+      - ./data/seaweed/master:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9333/dir/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: always
+    networks:
+      - consulta-rpp-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # SeaweedFS Volume (Production)
+  seaweedfs-volume:
+    image: chrislusf/seaweedfs:latest
+    container_name: consulta-rpp-seaweedfs-volume-prod
+    command: volume -max=0 -mserver="seaweedfs-master:9333" -port=8080 -ip=seaweedfs-volume
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/seaweed/volume:/data
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: always
+    networks:
+      - consulta-rpp-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Celery Worker (Production)
+  celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: consulta-rpp-celery-prod
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      ENVIRONMENT: production
+      LOG_LEVEL: info
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - db
+      - redis
+      - seaweedfs-volume
+    restart: always
+    networks:
+      - consulta-rpp-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Celery Beat Scheduler (Production)
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: consulta-rpp-celery-beat-prod
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      ENVIRONMENT: production
+      LOG_LEVEL: info
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - db
+      - redis
+    restart: always
+    networks:
+      - consulta-rpp-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # FastAPI Backend (Production - Multiple Instances with Load Balancer)
+  backend-1:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: consulta-rpp-backend-1-prod
+    environment:
+      API_URL: ${API_URL:-https://api.consulta-rpp.com}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      SEAWEEDFS_URL: http://seaweedfs-master:9333
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ENVIRONMENT: production
+      LOG_LEVEL: info
+      WORKERS: 4
+    ports:
+      - "8001:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      seaweedfs-volume:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: always
+    networks:
+      - consulta-rpp-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend-2:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: consulta-rpp-backend-2-prod
+    environment:
+      API_URL: ${API_URL:-https://api.consulta-rpp.com}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      SEAWEEDFS_URL: http://seaweedfs-master:9333
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ENVIRONMENT: production
+      LOG_LEVEL: info
+      WORKERS: 4
+    ports:
+      - "8002:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      seaweedfs-volume:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: always
+    networks:
+      - consulta-rpp-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend-3:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: consulta-rpp-backend-3-prod
+    environment:
+      API_URL: ${API_URL:-https://api.consulta-rpp.com}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      SEAWEEDFS_URL: http://seaweedfs-master:9333
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ENVIRONMENT: production
+      LOG_LEVEL: info
+      WORKERS: 4
+    ports:
+      - "8003:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      seaweedfs-volume:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: always
+    networks:
+      - consulta-rpp-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Nginx Load Balancer (Production)
+  nginx:
+    image: nginx:alpine
+    container_name: consulta-rpp-nginx-prod
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+    depends_on:
+      - backend-1
+      - backend-2
+      - backend-3
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: always
+    networks:
+      - consulta-rpp-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+
+networks:
+  consulta-rpp-network:
+    driver: bridge

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Chat bubble icon -->
+  <path d="M 8 12 Q 8 8 12 8 L 48 8 Q 52 8 52 12 L 52 40 Q 52 44 48 44 L 24 44 L 16 52 L 20 44 L 12 44 Q 8 44 8 40 Z" fill="none" stroke="#006B83" stroke-width="2"/>
+  <line x1="16" y1="20" x2="44" y2="20" stroke="#006B83" stroke-width="2"/>
+  <line x1="16" y1="30" x2="44" y2="30" stroke="#006B83" stroke-width="2"/>
+</svg>

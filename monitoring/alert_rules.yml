@@ -1,0 +1,243 @@
+groups:
+  - name: consulta_rpp_alerts
+    interval: 30s
+    
+    rules:
+      # ========== CRITICAL ALERTS ==========
+      
+      - alert: HighErrorRate
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[5m])) / 
+           sum(rate(http_requests_total[5m]))) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+          service: backend
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is above 1% (current: {{ $value | humanizePercentage }})"
+          runbook: "docs/RUNBOOKS.md#error-rate-high"
+
+      - alert: APIInstanceDown
+        expr: up{job="backend-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: backend
+        annotations:
+          summary: "API instance is down"
+          description: "Instance {{ $labels.instance }} has been down for more than 1 minute"
+          runbook: "docs/RUNBOOKS.md#api-instance-down"
+
+      - alert: DatabaseConnectionFailed
+        expr: up{job="postgresql"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: "Database connection failed"
+          description: "Cannot connect to PostgreSQL database for more than 2 minutes"
+          runbook: "docs/RUNBOOKS.md#database-connection-failed"
+
+      - alert: RedisCacheDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: cache
+        annotations:
+          summary: "Redis cache is down"
+          description: "Redis cache has been unavailable for more than 1 minute"
+          runbook: "docs/RUNBOOKS.md#redis-down"
+
+      - alert: DiskUsageCritical
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: infrastructure
+        annotations:
+          summary: "Disk usage critical"
+          description: "Disk usage is above 95% on {{ $labels.device }}"
+          runbook: "docs/RUNBOOKS.md#disk-full"
+
+      - alert: MemoryUsageCritical
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.90
+        for: 5m
+        labels:
+          severity: critical
+          service: infrastructure
+        annotations:
+          summary: "Memory usage critical"
+          description: "Memory usage is above 90% (current: {{ $value | humanizePercentage }})"
+          runbook: "docs/RUNBOOKS.md#memory-critical"
+
+      # ========== HIGH ALERTS ==========
+
+      - alert: HighResponseTime
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, endpoint)
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: high
+          service: backend
+        annotations:
+          summary: "High API response time"
+          description: "95th percentile response time is above 500ms on {{ $labels.endpoint }}"
+          runbook: "docs/RUNBOOKS.md#slow-responses"
+
+      - alert: HighCPUUsage
+        expr: (100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 80
+        for: 10m
+        labels:
+          severity: high
+          service: infrastructure
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is above 80% (current: {{ $value | humanizePercentage }})"
+          runbook: "docs/RUNBOOKS.md#high-cpu"
+
+      - alert: DatabaseSlowQueries
+        expr: pg_stat_statements_mean_time > 1000
+        for: 5m
+        labels:
+          severity: high
+          service: database
+        annotations:
+          summary: "Slow database queries detected"
+          description: "Average query time is above 1 second"
+          runbook: "docs/RUNBOOKS.md#slow-queries"
+
+      - alert: RedisCacheHighMemory
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.80
+        for: 5m
+        labels:
+          severity: high
+          service: cache
+        annotations:
+          summary: "Redis cache memory usage high"
+          description: "Redis memory usage is above 80%"
+          runbook: "docs/RUNBOOKS.md#redis-memory"
+
+      - alert: NginxHighConnections
+        expr: nginx_connections_active > 1000
+        for: 5m
+        labels:
+          severity: high
+          service: loadbalancer
+        annotations:
+          summary: "High number of active Nginx connections"
+          description: "Active connections: {{ $value }}"
+          runbook: "docs/RUNBOOKS.md#nginx-connections"
+
+      - alert: SSLCertificateExpiringSoon
+        expr: (ssl_cert_not_after - time()) / 86400 < 30
+        labels:
+          severity: high
+          service: security
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: "SSL certificate will expire in {{ $value }} days"
+          runbook: "docs/RUNBOOKS.md#ssl-renewal"
+
+      # ========== MEDIUM ALERTS ==========
+
+      - alert: MediumErrorRate
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[5m])) / 
+           sum(rate(http_requests_total[5m]))) > 0.005
+        for: 10m
+        labels:
+          severity: medium
+          service: backend
+        annotations:
+          summary: "Error rate elevated"
+          description: "Error rate is above 0.5% (current: {{ $value | humanizePercentage }})"
+
+      - alert: MemoryUsageHigh
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.80
+        for: 10m
+        labels:
+          severity: medium
+          service: infrastructure
+        annotations:
+          summary: "Memory usage high"
+          description: "Memory usage is above 80%"
+
+      - alert: DiskUsageHigh
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.20
+        for: 15m
+        labels:
+          severity: medium
+          service: infrastructure
+        annotations:
+          summary: "Disk usage high"
+          description: "Disk usage is above 80% on {{ $labels.device }}"
+
+      # ========== UPTIME MONITORING ==========
+
+      - alert: TargetDown
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: high
+          service: monitoring
+        annotations:
+          summary: "Target is down"
+          description: "{{ $labels.job }} on {{ $labels.instance }} has been down for more than 5 minutes"
+
+      # ========== RATE LIMITING ==========
+
+      - alert: HighRateLimitViolations
+        expr: sum(rate(rate_limit_exceeded_total[5m])) > 100
+        for: 5m
+        labels:
+          severity: medium
+          service: backend
+        annotations:
+          summary: "High rate limit violations detected"
+          description: "{{ $value | humanize }} violations per second"
+
+      # ========== BUSINESS METRICS ==========
+
+      - alert: NoSearchActivity
+        expr: increase(search_requests_total[1h]) == 0
+        for: 30m
+        labels:
+          severity: medium
+          service: business
+        annotations:
+          summary: "No search activity in the last hour"
+          description: "This could indicate a problem with the search functionality"
+
+      - alert: LowCacheHitRatio
+        expr: cache_hit_ratio < 0.70
+        for: 10m
+        labels:
+          severity: medium
+          service: performance
+        annotations:
+          summary: "Cache hit ratio is lower than target"
+          description: "Current cache hit ratio: {{ $value | humanizePercentage }} (target: 80%)"
+
+# Aggregation rules for performance
+  - name: consulta_rpp_recording_rules
+    interval: 15s
+    rules:
+      - record: job:http_requests_total:rate5m
+        expr: sum(rate(http_requests_total[5m])) by (job)
+
+      - record: job:http_request_duration_seconds:avg5m
+        expr: avg(http_request_duration_seconds) by (job)
+
+      - record: instance:memory_usage:percent
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100
+
+      - record: instance:cpu_usage:percent
+        expr: (100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100))
+
+      - record: instance:disk_usage:percent
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100

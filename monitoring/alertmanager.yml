@@ -1,0 +1,137 @@
+global:
+  resolve_timeout: 5m
+  slack_api_url: '${SLACK_WEBHOOK}'
+
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+route:
+  receiver: 'default'
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 4h
+
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical'
+      group_wait: 0s
+      group_interval: 2m
+      repeat_interval: 10m
+      
+    # High priority alerts
+    - match:
+        severity: high
+      receiver: 'high'
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 2h
+      
+    # Medium priority alerts
+    - match:
+        severity: medium
+      receiver: 'medium'
+      group_wait: 2m
+      group_interval: 15m
+      repeat_interval: 6h
+
+    # Low priority - daily digest
+    - match:
+        severity: low
+      receiver: 'low'
+      group_wait: 5m
+      group_interval: 1h
+      repeat_interval: 24h
+
+receivers:
+  # Critical - Phone, Email, PagerDuty, Slack (immediate)
+  - name: 'critical'
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_SERVICE_KEY}'
+        description: '{{ .GroupLabels.alertname }}'
+
+    email_configs:
+      - to: '${ALERT_EMAIL}'
+        from: 'alerts@consulta-rpp.com'
+        smarthost: '${SMTP_HOST}:${SMTP_PORT}'
+        auth_username: '${SMTP_USERNAME}'
+        auth_password: '${SMTP_PASSWORD}'
+        headers:
+          Subject: '[CRITICAL] {{ .GroupLabels.alertname }}'
+        html: |
+          <h2>{{ .GroupLabels.alertname }}</h2>
+          {{ range .Alerts }}
+            <p>{{ .Annotations.description }}</p>
+            <p><a href="{{ .Annotations.runbook }}">Runbook</a></p>
+          {{ end }}
+
+    slack_configs:
+      - channel: '#alerts-critical'
+        title: 'Critical Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ .GroupLabels.service }} alert'
+        color: 'danger'
+        send_resolved: true
+        api_url: '${SLACK_WEBHOOK}'
+
+  # High - Email, Slack (within minutes)
+  - name: 'high'
+    email_configs:
+      - to: '${ALERT_EMAIL}'
+        from: 'alerts@consulta-rpp.com'
+        smarthost: '${SMTP_HOST}:${SMTP_PORT}'
+        auth_username: '${SMTP_USERNAME}'
+        auth_password: '${SMTP_PASSWORD}'
+        headers:
+          Subject: '[HIGH] {{ .GroupLabels.alertname }}'
+
+    slack_configs:
+      - channel: '#alerts-high'
+        title: 'High Priority: {{ .GroupLabels.alertname }}'
+        color: 'warning'
+        send_resolved: true
+
+  # Medium - Slack digest
+  - name: 'medium'
+    slack_configs:
+      - channel: '#alerts-medium'
+        title: 'Alert: {{ .GroupLabels.alertname }}'
+        color: '#0099FF'
+        send_resolved: false
+
+  # Low - Slack daily digest
+  - name: 'low'
+    slack_configs:
+      - channel: '#alerts-low'
+        title: 'Info: {{ .GroupLabels.alertname }}'
+        color: '#0099FF'
+        send_resolved: false
+
+  # Default receiver
+  - name: 'default'
+    slack_configs:
+      - channel: '#alerts'
+        title: '{{ .GroupLabels.alertname }}'
+        color: '{{ if eq .GroupLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
+
+inhibit_rules:
+  # Suppress lower severity alerts if critical alert exists
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'high'
+    equal: ['alertname', 'dev', 'instance']
+
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'medium'
+    equal: ['alertname', 'dev', 'instance']
+
+  # Suppress instance down alerts if node down
+  - source_match:
+      alertname: 'NodeDown'
+    target_match_re:
+      alertname: '.*Down'
+    equal: ['instance']

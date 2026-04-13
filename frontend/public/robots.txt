@@ -1,0 +1,18 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /api
+Disallow: /health
+Disallow: /docs
+
+Sitemap: https://consulta-rpp.com/sitemap.xml
+
+# Crawl delay
+Crawl-delay: 1
+
+# Request rate
+Request-rate: 30/60
+
+# Comment for developers
+# ConsultaRPP - Registro Público de la Propiedad
+# AI-powered property registry search system
