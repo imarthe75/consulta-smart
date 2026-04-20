@@ -9,11 +9,16 @@ export default function Navigation() {
 
     const isActive = (path) => location.pathname === path
 
-    const navItems = [
+    const allNavItems = [
         { path: '/', label: 'Chat', icon: MessageSquare },
-        { path: '/documentos', label: 'Documentos', icon: FileText },
-        { path: '/resultados', label: 'Búsqueda', icon: Search },
+        { path: '/documentos', label: 'Documentos', icon: FileText, adminOnly: true },
+        { path: '/resultados', label: 'Búsqueda', icon: Search, adminOnly: true },
     ]
+
+    const navItems = allNavItems.filter(item => {
+        if (!item.adminOnly) return true;
+        return user?.role === 'admin';
+    })
 
     return (
         <nav className="w-64 bg-white border-r border-gray-200 flex flex-col">

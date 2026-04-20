@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo de Integración - RPP Expert Chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --puebla-red: #540b0e;
+            --qroo-blue: #004a87;
+        }
+        body {
+            font-family: 'Outfit', sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f8fafc;
+            color: #1e293b;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        header {
+            background: var(--qroo-blue);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        main {
+            flex: 1;
+            max-width: 800px;
+            margin: 3rem auto;
+            padding: 2rem;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.05);
+        }
+        .code-container {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 1.5rem;
+            border-radius: 12px;
+            overflow-x: auto;
+            position: relative;
+            margin-top: 1.5rem;
+        }
+        pre { margin: 0; font-family: 'Courier New', Courier, monospace; }
+        .tag { color: #f472b6; }
+        .attr { color: #60a5fa; }
+        .val { color: #34d399; }
+        h2 { color: var(--qroo-blue); border-bottom: 2px solid #f1f5f9; padding-bottom: 0.5rem; }
+        p { line-height: 1.6; }
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            background: #e0f2fe;
+            color: #0369a1;
+            border-radius: 9999px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Portal Ciudadano (Simulación)</h1>
+    <p>Página de ejemplo para probar la integración del Widget de ConsultaRPP</p>
+</header>
+
+<main>
+    <span class="badge">Guía para Desarrolladores</span>
+    <h2>Integración del Asistente Experto</h2>
+    <p>
+        Para integrar el chat en su portal, siga estos dos sencillos pasos. El widget detectará automáticamente
+        el entorno y configurará una sesión de invitado segura sin requerir autenticación manual.
+    </p>
+
+    <h3>1. Cargar el Script</h3>
+    <p>Añada este script antes del cierre de la etiqueta <code>&lt;/body&gt;</code>:</p>
+    <div class="code-container">
+        <pre>&lt;<span class="tag">script</span> <span class="attr">src</span>=<span class="val">"http://10.4.3.28:3001/static/rpp-widget.js"</span>&gt;&lt;/<span class="tag">script</span>&gt;</pre>
+    </div>
+
+    <h3>2. Insertar el Componente</h3>
+    <p>Ubique el widget en su HTML. Puede personalizar los colores según el estado (Puebla/QRoo):</p>
+    <div class="code-container">
+        <pre>&lt;<span class="tag">rpp-chat-widget</span> 
+    <span class="attr">primary-color</span>=<span class="val">"#004a87"</span> 
+    <span class="attr">bot-name</span>=<span class="val">"Consultor SIQROO"</span>
+    <span class="attr">endpoint</span>=<span class="val">"http://10.4.3.28:3001"</span>
+    <span class="attr">app-url</span>=<span class="val">"http://10.4.3.28:3000/widget"</span>&gt;
+&lt;/<span class="tag">rpp-chat-widget</span>&gt;</pre>
+    </div>
+
+    <div style="margin-top: 3rem; padding: 1.5rem; background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 8px;">
+        <p style="margin: 0; font-weight: 600; color: #92400e;">💡 Nota Técnica:</p>
+        <p style="margin: 0.5rem 0 0; font-size: 0.9rem; color: #b45309;">
+            El atributo <code>endpoint</code> debe apuntar a la URL pública donde está desplegado el backend de ConsultaRPP (Puerto 3001).
+            El atributo <code>app-url</code> apunta a la interfaz visual (Puerto 3000).
+        </p>
+    </div>
+</main>
+
+<!-- INTEGRACIÓN DEL WIDGET (ACTIVO EN ESTA PÁGINA) -->
+<script src="http://10.4.3.28:3001/static/rpp-widget.js"></script>
+<rpp-chat-widget 
+    primary-color="#004a87" 
+    bot-name="Consultor Experto SIQROO"
+    endpoint="http://10.4.3.28:3001"
+    app-url="http://10.4.3.28:3000/widget">
+</rpp-chat-widget>
+
+</body>
+</html>

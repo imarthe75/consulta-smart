@@ -1,0 +1,44 @@
+🚀 Iniciando prueba de estrés y funcionalidad ConsultaRPP 2026...
+🔑 Intentando login como: demo@example.com
+✅ Autenticación exitosa.
+💬 Enviando consulta: 'Me aceptan una copia de mis papeles para pedir una constancia de libertad de gravámen?'
+DEBUG Full Response: {
+  "status": "success",
+  "data": {
+    "session_id": "cd120acf-3dc2-4400-89e7-e0184eb0ba8e",
+    "response": "La respuesta a tu pregunta depende de la instituci\u00f3n o entidad espec\u00edfica a la que est\u00e1s solicitando la constancia de libertad de grav\u00e1men. En general, para solicitar una constancia de libertad de grav\u00e1men, es com\u00fan que se requiera la presentaci\u00f3n de documentos originales o copias certificadas de los mismos. Sin embargo, es importante verificar directamente con la instituci\u00f3n o entidad correspondiente, ya que las pol\u00edticas pueden variar.\n\nEn el caso de la plataforma SIQROO (Sistema Integrado de Servicios P\u00fablicos en L\u00ednea) mencionada en la informaci\u00f3n proporcionada, parece que se ofrecen servicios relacionados con la propiedad y los grav\u00e1menes, incluyendo la solicitud de certificados de libertad de grav\u00e1menes. Para este tipo de solicitudes, es probable que se requiera la presentaci\u00f3n de documentos espec\u00edficos, que pueden incluir copias de los papeles relacionados con la propiedad o el gravamen.\n\nPara asegurarte de que te acepten una copia de tus papeles para pedir una constancia de libertad de grav\u00e1men, te recomiendo lo siguiente:\n\n1. **Verifica los requisitos espec\u00edficos**: Antes de presentar tu solicitud, verifica en el sitio web oficial de la instituci\u00f3n o entidad qu\u00e9 documentos son necesarios y si se aceptan copias o si es necesario presentar los originales.\n\n2. **Contacta directamente con la instituci\u00f3n**: Si no est\u00e1s seguro sobre los requisitos de documentaci\u00f3n, es una buena idea contactar directamente con la instituci\u00f3n para obtener informaci\u00f3n precisa y actualizada.\n\n3. **Prepara tus documentos**: Aseg\u00farate de tener todas las copias o originales de los documentos necesarios antes de presentar tu solicitud.\n\nRecuerda que la informaci\u00f3n proporcionada es general y puede variar dependiendo de la jurisdicci\u00f3n o de las pol\u00edticas espec\u00edficas de la instituci\u00f3n a la que est\u00e1s solicitando el servicio.\n\n---\n*LLM: groq (RAG)*",
+    "sources": [
+      "RPP Registry - rpp-registry > OFICINAS_CONTACTOS_RPP.md (2024-V1)",
+      "RPP Registry - rpp-registry > DICCIONARIO_ACTOS_REGISTRABLES.md (2024-V1)",
+      "RPP Registry - rpp-registry > puebla > PROCEDIMIENTOS.md (2024-V1)",
+      "RPP Registry - rpp-registry > rpp-registry > DERECHOS_COSTOS_QUINTANA_ROO.md (2024-V1)",
+      "RPP Registry - rpp-registry > DERECHOS_COSTOS_QUINTANA_ROO.md (2024-V1)"
+    ],
+    "has_relevant_knowledge": false,
+    "conversation_history": [
+      {
+        "role": "user",
+        "content": "Me aceptan una copia de mis papeles para pedir una constancia de libertad de grav\u00e1men?",
+        "timestamp": "2026-04-14T12:32:48.490253"
+      },
+      {
+        "role": "assistant",
+        "content": "La respuesta a tu pregunta depende de la instituci\u00f3n o entidad espec\u00edfica a la que est\u00e1s solicitando la constancia de libertad de grav\u00e1men. En general, para solicitar una constancia de libertad de grav\u00e1men, es com\u00fan que se requiera la presentaci\u00f3n de documentos originales o copias certificadas de los mismos. Sin embargo, es importante verificar directamente con la instituci\u00f3n o entidad correspondiente, ya que las pol\u00edticas pueden variar.\n\nEn el caso de la plataforma SIQROO (Sistema Integrado de Servicios P\u00fablicos en L\u00ednea) mencionada en la informaci\u00f3n proporcionada, parece que se ofrecen servicios relacionados con la propiedad y los grav\u00e1menes, incluyendo la solicitud de certificados de libertad de grav\u00e1menes. Para este tipo de solicitudes, es probable que se requiera la presentaci\u00f3n de documentos espec\u00edficos, que pueden incluir copias de los papeles relacionados con la propiedad o el gravamen.\n\nPara asegurarte de que te acepten una copia de tus papeles para pedir una constancia de libertad de grav\u00e1men, te recomiendo lo siguiente:\n\n1. **Verifica los requisitos espec\u00edficos**: Antes de presentar tu solicitud, verifica en el sitio web oficial de la instituci\u00f3n o entidad qu\u00e9 documentos son necesarios y si se aceptan copias o si es necesario presentar los originales.\n\n2. **Contacta directamente con la instituci\u00f3n**: Si no est\u00e1s seguro sobre los requisitos de documentaci\u00f3n, es una buena idea contactar directamente con la instituci\u00f3n para obtener informaci\u00f3n precisa y actualizada.\n\n3. **Prepara tus documentos**: Aseg\u00farate de tener todas las copias o originales de los documentos necesarios antes de presentar tu solicitud.\n\nRecuerda que la informaci\u00f3n proporcionada es general y puede variar dependiendo de la jurisdicci\u00f3n o de las pol\u00edticas espec\u00edficas de la instituci\u00f3n a la que est\u00e1s solicitando el servicio.\n\n---\n*LLM: groq (RAG)*",
+        "timestamp": "2026-04-14T12:32:54.667829"
+      }
+    ],
+    "cache_info": {
+      "from_cache": null,
+      "similarity_score": null,
+      "query_length": null,
+      "response_length": null
+    }
+  }
+}
+
+🤖 RESPUESTA DEL ASISTENTE EXPERTO:
+--------------------------------------------------
+Sin respuesta
+--------------------------------------------------
+
+✅ Prueba finalizada con éxito. Proveedor utilizado: N/A

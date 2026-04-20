@@ -1,18 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { useChatStore } from '../stores/chatStore'
 import { useDocumentStore } from '../stores/documentStore'
+import { useAuthStore } from '../stores/authStore'
 import { chatAPI } from '../services/api'
-import { Send, Plus, Trash2, Edit2, Check, X, RefreshCcw } from 'lucide-react'
+import { Send, Plus, Trash2, Edit2, Check, X, RefreshCcw, FileText, MessageSquare, LogOut, Search } from 'lucide-react'
 import clsx from 'clsx'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
-export default function ChatInterface() {
+export default function ChatInterface({ isWidget = false }) {
     const [input, setInput] = useState('')
     const [sessions, setSessions] = useState([])
     const [currentSessionId, setCurrentSessionId] = useState(null)
     const [editingSessionId, setEditingSessionId] = useState(null)
     const [newTitle, setNewTitle] = useState('')
     const messagesEndRef = useRef(null)
-
+    const { user, logout } = useAuthStore()
     const { messages, loading, error, addMessage, setMessages, setLoading, setError, clearMessages } = useChatStore()
     const { documents } = useDocumentStore()
 
@@ -20,6 +24,13 @@ export default function ChatInterface() {
     useEffect(() => {
         const fetchSessions = async () => {
             try {
+                if (isWidget) {
+                    // En modo widget, siempre crear sesión nueva al inicio
+                    const response = await chatAPI.createSession('Consulta Widget')
+                    setCurrentSessionId(response.data.data.id)
+                    return
+                }
+
                 const response = await chatAPI.getSessions()
                 if (response.data?.data?.sessions) {
                     const fetchedSessions = response.data.data.sessions
@@ -39,7 +50,7 @@ export default function ChatInterface() {
             }
         }
         fetchSessions()
-    }, [])
+    }, [isWidget])
 
     // Fetch session messages when changing session
     useEffect(() => {
@@ -85,28 +96,34 @@ export default function ChatInterface() {
         const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
         if (!lastUserMessage || !currentSessionId) return;
         
+        const activeSessionId = currentSessionId;
         setError(null);
         setLoading(true);
 
         try {
             const response = await chatAPI.sendQuery(
-                currentSessionId,
+                activeSessionId,
                 lastUserMessage.content,
                 documents.map(d => d.id)
             )
 
-            const assistantMessage = {
-                role: 'assistant',
-                content: response.data.data.response,
-                sources: response.data.data.sources || [],
-                timestamp: new Date().toISOString(),
+            if (activeSessionId === currentSessionId) {
+                const assistantMessage = {
+                    role: 'assistant',
+                    content: response.data.data.response,
+                    sources: response.data.data.sources || [],
+                    timestamp: new Date().toISOString(),
+                }
+                addMessage(assistantMessage)
             }
-
-            addMessage(assistantMessage)
         } catch (err) {
-            setError('Error al enviar mensaje: ' + err.message)
+            if (activeSessionId === currentSessionId) {
+                setError('Error al enviar mensaje: ' + err.message)
+            }
         } finally {
-            setLoading(false)
+            if (activeSessionId === currentSessionId) {
+                setLoading(false)
+            }
         }
     }
 
@@ -114,6 +131,7 @@ export default function ChatInterface() {
         e.preventDefault()
         if (!input.trim() || !currentSessionId) return
 
+        const activeSessionId = currentSessionId;
         const userMessage = {
             role: 'user',
             content: input,
@@ -127,23 +145,28 @@ export default function ChatInterface() {
 
         try {
             const response = await chatAPI.sendQuery(
-                currentSessionId,
+                activeSessionId,
                 input,
                 documents.map(d => d.id)
             )
 
-            const assistantMessage = {
-                role: 'assistant',
-                content: response.data.data.response,
-                sources: response.data.data.sources || [],
-                timestamp: new Date().toISOString(),
+            if (activeSessionId === currentSessionId) {
+                const assistantMessage = {
+                    role: 'assistant',
+                    content: response.data.data.response,
+                    sources: response.data.data.sources || [],
+                    timestamp: new Date().toISOString(),
+                }
+                addMessage(assistantMessage)
             }
-
-            addMessage(assistantMessage)
         } catch (err) {
-            setError('Error al enviar mensaje: ' + err.message)
+            if (activeSessionId === currentSessionId) {
+                setError('Error al enviar mensaje: ' + err.message)
+            }
         } finally {
-            setLoading(false)
+            if (activeSessionId === currentSessionId) {
+                setLoading(false)
+            }
         }
     }
 
@@ -174,121 +197,185 @@ export default function ChatInterface() {
         }
     }
 
-    return (
-        <div className="flex h-full">
-            {/* Sidebar Sessions */}
-            <div className="w-64 bg-gray-100 border-r border-gray-300 flex flex-col">
-                <button
-                    onClick={createSession}
-                    className="m-4 flex items-center justify-center space-x-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                    <Plus size={20} />
-                    <span>Nueva Sesión</span>
-                </button>
+    const location = useLocation()
 
-                <div className="flex-1 overflow-y-auto">
-                    {sessions.map(session => (
-                        <div
-                            key={session.id}
-                            className={clsx(
-                                'mx-2 my-1 p-3 rounded-lg cursor-pointer transition-colors group',
-                                currentSessionId === session.id
-                                    ? 'bg-primary text-white'
-                                    : 'bg-white text-gray-800 hover:bg-gray-200'
-                            )}
-                            onClick={() => {
-                                if (editingSessionId !== session.id) {
-                                    setCurrentSessionId(session.id)
-                                }
-                            }}
-                        >
-                            <div className="flex items-center justify-between">
-                                {editingSessionId === session.id ? (
-                                    <div className="flex items-center w-full space-x-1" onClick={e => e.stopPropagation()}>
-                                        <input
-                                            type="text"
-                                            value={newTitle}
-                                            onChange={e => setNewTitle(e.target.value)}
-                                            className="w-full px-2 py-1 text-sm text-black rounded"
-                                            autoFocus
-                                            onKeyDown={e => {
-                                                if (e.key === 'Enter') handleSaveTitle(session.id)
-                                                if (e.key === 'Escape') setEditingSessionId(null)
-                                            }}
-                                        />
-                                        <button onClick={() => handleSaveTitle(session.id)} className="p-1 hover:bg-green-500 rounded"><Check size={14} /></button>
-                                        <button onClick={() => setEditingSessionId(null)} className="p-1 hover:bg-red-500 rounded"><X size={14} /></button>
-                                    </div>
-                                ) : (
-                                    <>
-                                        <span className="truncate text-sm font-medium pr-2">{session.title}</span>
-                                        <div className="flex opacity-0 group-hover:opacity-100 transition-all space-x-1">
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    setEditingSessionId(session.id)
-                                                    setNewTitle(session.title)
-                                                }}
-                                                className="p-1 hover:bg-blue-500 rounded transition-all"
-                                                title="Renombrar sesión"
-                                            >
-                                                <Edit2 size={16} />
-                                            </button>
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    deleteSession(session.id)
-                                                }}
-                                                className="p-1 hover:bg-red-500 rounded transition-all"
-                                                title="Eliminar sesión"
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </div>
-                                    </>
-                                )}
+    return (
+        <div className="flex h-full w-full bg-white overflow-hidden">
+            {/* Unified Sidebar - Hidden in widget mode */}
+            {!isWidget && (
+                <div className="w-80 bg-gray-50 border-r border-gray-200 flex flex-col shrink-0">
+                    {/* Header with Logo */}
+                    <div className="p-6 border-b border-gray-100 bg-white">
+                        <div className="flex items-center space-x-3">
+                            <img src="/src/assets/logo.svg" alt="Logo" className="w-10 h-10 rounded-xl shadow-sm" />
+                            <div>
+                                <h1 className="text-xl font-bold text-slate-800 tracking-tight">ConsultaRPP</h1>
+                                <p className="text-[10px] text-blue-600 font-bold uppercase tracking-widest">Universal RAG</p>
                             </div>
                         </div>
-                    ))}
-                </div>
-            </div>
+                    </div>
 
-            {/* Chat Area */}
-            <div className="flex-1 flex flex-col">
-                {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                    <button
+                        onClick={createSession}
+                        className="m-6 flex items-center justify-center space-x-2 px-4 py-4 bg-blue-600 text-white rounded-2xl hover:bg-blue-700 transition-all shadow-lg active:scale-95"
+                    >
+                        <Plus size={20} />
+                        <span className="font-bold">Nueva Sesión</span>
+                    </button>
+
+                    {/* Admin Quick Links */}
+                    {user?.role === 'admin' && (
+                        <div className="px-6 mb-4 space-y-1">
+                            <Link
+                                to="/documentos"
+                                className={clsx(
+                                    "flex items-center space-x-3 px-4 py-3 rounded-xl transition-all font-medium text-sm",
+                                    location.pathname === '/documentos' ? 'bg-blue-50 text-blue-600' : 'text-slate-500 hover:bg-gray-100'
+                                )}
+                            >
+                                <FileText size={18} />
+                                <span>Base de Conocimiento</span>
+                            </Link>
+                            <Link
+                                to="/resultados"
+                                className={clsx(
+                                    "flex items-center space-x-3 px-4 py-3 rounded-xl transition-all font-medium text-sm",
+                                    location.pathname === '/resultados' ? 'bg-blue-50 text-blue-600' : 'text-slate-500 hover:bg-gray-100'
+                                )}
+                            >
+                                <Search size={18} />
+                                <span>Búsqueda Inteligente</span>
+                            </Link>
+                        </div>
+                    )}
+
+                    <div className="px-6 mb-2">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tus Sesiones</p>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2">
+                            {sessions.map(session => (
+                                <div
+                                    key={session.id}
+                                    className={clsx(
+                                        'p-4 rounded-xl cursor-pointer transition-all group border',
+                                        currentSessionId === session.id
+                                            ? 'bg-blue-600 text-white border-blue-700 shadow-sm'
+                                            : 'bg-white text-gray-700 border-gray-100 hover:border-blue-200 hover:bg-blue-50'
+                                    )}
+                                    onClick={() => editingSessionId !== session.id && setCurrentSessionId(session.id)}
+                                >
+                                    <div className="flex items-center justify-between">
+                                        {editingSessionId === session.id ? (
+                                            <div className="flex items-center w-full space-x-1" onClick={e => e.stopPropagation()}>
+                                                <input
+                                                    type="text"
+                                                    value={newTitle}
+                                                    onChange={e => setNewTitle(e.target.value)}
+                                                    className="w-full px-2 py-1 text-sm text-black rounded border-none focus:ring-0"
+                                                    autoFocus
+                                                    onKeyDown={e => {
+                                                        if (e.key === 'Enter') handleSaveTitle(session.id)
+                                                        if (e.key === 'Escape') setEditingSessionId(null)
+                                                    }}
+                                                />
+                                                <button onClick={() => handleSaveTitle(session.id)} className="p-1 hover:text-green-500"><Check size={14} /></button>
+                                                <button onClick={() => setEditingSessionId(null)} className="p-1 hover:text-red-500"><X size={14} /></button>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <span className="truncate text-sm font-medium pr-2">{session.title}</span>
+                                                <div className="flex opacity-0 group-hover:opacity-100 transition-all space-x-1">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            setEditingSessionId(session.id)
+                                                            setNewTitle(session.title)
+                                                        }}
+                                                        className="p-1 hover:bg-blue-400 rounded"
+                                                    >
+                                                        <Edit2 size={14} />
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            deleteSession(session.id)
+                                                        }}
+                                                        className="p-1 hover:bg-red-400 rounded"
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Footer User Section */}
+                        <div className="p-6 border-t border-gray-100 bg-white">
+                            <div className="flex items-center justify-between">
+                                <div className="flex-1 min-w-0 mr-3">
+                                    <p className="text-sm font-bold text-slate-800 truncate">
+                                        {user?.username || 'Usuario'}
+                                    </p>
+                                    <p className="text-[11px] text-slate-400 truncate uppercase tracking-tighter">
+                                        {user?.role || 'User'}
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={logout}
+                                    className="p-3 bg-slate-50 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all shadow-sm group"
+                                    title="Cerrar sesión"
+                                >
+                                    <LogOut size={20} className="group-hover:scale-110 transition-transform" />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+            )}
+
+            {/* Chat Area - Ocupa todo si no hay sidebar */}
+            <div className="flex-1 flex flex-col bg-slate-50 relative">
+                <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scroll-smooth">
                     {!currentSessionId ? (
-                        <div className="flex items-center justify-center h-full text-gray-400">
-                            <p>Selecciona o crea una nueva sesión para comenzar</p>
+                        <div className="flex flex-col items-center justify-center h-full text-gray-400 space-y-4">
+                            <div className="p-6 bg-white rounded-full shadow-inner animate-pulse">
+                                <MessageSquare size={48} className="text-blue-200" />
+                            </div>
+                            <p className="text-lg font-medium">Inicie una sesión para asesoría registral</p>
                         </div>
                     ) : messages.length === 0 ? (
-                        <div className="flex items-center justify-center h-full text-gray-400">
-                            <p>¿Cómo puedo ayudarte hoy?</p>
+                        <div className="flex flex-col items-center justify-center h-full text-gray-300 space-y-2">
+                            <span className="text-6xl">🏛️</span>
+                            <p className="text-xl">¿En qué trámite del IRCEP/RPP puedo apoyarle hoy?</p>
                         </div>
                     ) : (
                         messages.map((msg, idx) => (
-                            <div
-                                key={idx}
-                                className={clsx(
-                                    'flex',
-                                    msg.role === 'user' ? 'justify-end' : 'justify-start'
-                                )}
-                            >
-                                <div
-                                    className={clsx(
-                                        'max-w-md px-4 py-2 rounded-lg',
-                                        msg.role === 'user'
-                                            ? 'bg-primary text-white'
-                                            : 'bg-gray-200 text-gray-800'
-                                    )}
-                                >
-                                    <p className="text-sm">{msg.content}</p>
+                            <div key={idx} className={clsx('flex w-full', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
+                                <div className={clsx(
+                                    'max-w-[90%] px-4 py-3 rounded-xl shadow-md border animate-in fade-in slide-in-from-bottom-2 duration-300',
+                                    msg.role === 'user'
+                                        ? 'bg-blue-600 text-white rounded-br-none border-blue-700'
+                                        : 'bg-white text-slate-800 rounded-bl-none border-slate-200'
+                                )}>
+                                    <div className="text-[14px] whitespace-pre-wrap leading-tight tabular-nums markdown-content prose prose-slate prose-sm max-w-none text-slate-800">
+                                        <ReactMarkdown 
+                                            remarkPlugins={[remarkGfm]}
+                                        >
+                                            {msg.content}
+                                        </ReactMarkdown>
+                                    </div>
                                     {msg.sources && msg.sources.length > 0 && (
-                                        <div className="mt-2 text-xs opacity-75">
-                                            <p className="font-semibold">Fuentes:</p>
-                                            <ul className="list-disc list-inside">
+                                        <div className={clsx('mt-6 pt-4 border-t text-xs', msg.role === 'user' ? 'border-blue-500 text-blue-100' : 'border-slate-100 text-slate-400')}>
+                                            <p className="font-bold mb-2 uppercase tracking-wider">Fuentes Oficiales:</p>
+                                            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                                 {msg.sources.map((src, i) => (
-                                                    <li key={i}>{src}</li>
+                                                    <li key={i} className="flex items-center space-x-1">
+                                                        <FileText size={10} />
+                                                        <span className="truncate">{src}</span>
+                                                    </li>
                                                 ))}
                                             </ul>
                                         </div>
@@ -297,52 +384,54 @@ export default function ChatInterface() {
                             </div>
                         ))
                     )}
-
+                    
                     {loading && (
                         <div className="flex justify-start">
-                            <div className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg">
-                                <p className="text-sm">Escribiendo...</p>
+                            <div className="bg-white border border-slate-200 text-slate-400 px-8 py-4 rounded-3xl shadow-sm italic flex items-center space-x-3">
+                                <RefreshCcw size={16} className="animate-spin" />
+                                <span>Consultando normativa registral...</span>
                             </div>
                         </div>
                     )}
 
                     {error && (
-                        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded flex justify-between items-center">
-                            <span>{error}</span>
-                            <button
-                                onClick={handleRetry}
-                                className="flex items-center space-x-1 px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition ml-4 shrink-0"
-                            >
-                                <RefreshCcw size={14} />
-                                <span>Reintentar</span>
+                        <div className="max-w-2xl mx-auto bg-red-50 border border-red-100 text-red-600 px-6 py-4 rounded-2xl flex justify-between items-center shadow-lg">
+                            <div className="flex items-center space-x-3">
+                                <X size={20} className="text-red-400" />
+                                <span className="font-medium">{error}</span>
+                            </div>
+                            <button onClick={handleRetry} className="bg-red-600 text-white px-4 py-2 rounded-xl hover:bg-red-700 transition shadow-sm font-bold">
+                                Reintentar
                             </button>
                         </div>
                     )}
-
-                    <div ref={messagesEndRef} />
+                    <div ref={messagesEndRef} className="h-4" />
                 </div>
 
-                {/* Input */}
+                {/* Unified Input Bar */}
                 {currentSessionId && (
-                    <form onSubmit={sendMessage} className="p-4 border-t border-gray-200">
-                        <div className="flex space-x-2">
+                    <div className="p-4 md:p-5 bg-white border-t border-slate-200 shadow-2xl">
+                        <form onSubmit={sendMessage} className="max-w-6xl mx-auto relative group">
                             <input
                                 type="text"
                                 value={input}
                                 onChange={(e) => setInput(e.target.value)}
-                                placeholder="Escribe tu pregunta aquí..."
+                                placeholder="Escriba aquí su consulta sobre trámites, requisitos o derechos..."
                                 disabled={loading}
-                                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+                                className="w-full px-6 py-3.5 text-lg bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] focus:outline-none focus:border-blue-500 focus:bg-white transition-all shadow-inner disabled:opacity-50 pr-16"
                             />
                             <button
                                 type="submit"
                                 disabled={loading || !input.trim()}
-                                className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                                className="absolute right-2 top-2 bottom-2 px-5 bg-blue-600 text-white rounded-[1.2rem] hover:bg-blue-700 disabled:opacity-50 transition-all shadow-lg active:scale-95 flex items-center justify-center"
                             >
-                                <Send size={20} />
+                                <Send size={22} />
                             </button>
-                        </div>
-                    </form>
+                        </form>
+                        <p className="text-center text-[9px] text-slate-400 mt-3 uppercase tracking-[0.2em]">
+                            Sistema de Asesoría Legal Basado en Normativa Vigente 2026
+                        </p>
+                    </div>
                 )}
             </div>
         </div>

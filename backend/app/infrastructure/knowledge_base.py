@@ -3,7 +3,7 @@
 from typing import List, Dict, Any, Optional
 from app.core.logger import logger
 from sqlalchemy import text
-from app.infrastructure.external.llm_service import get_llm_provider
+from app.infrastructure.external.llm_service import get_local_embedding_service
 
 
 class KnowledgeBase:
@@ -17,8 +17,8 @@ class KnowledgeBase:
         return cls._instance
     
     def __init__(self):
-        self.llm = get_llm_provider()
-        logger.info("✅ KnowledgeBase: Inicializado con búsqueda en PostgreSQL+pgvector")
+        self.llm = get_local_embedding_service()
+        logger.info("✅ KnowledgeBase: Inicializado con búsqueda en PostgreSQL+pgvector usando embeddings locales")
     
     async def search_in_knowledge_async(
         self, 
@@ -54,58 +54,45 @@ class KnowledgeBase:
 
         # 2. Búsqueda Vectorial (Semántica)
         try:
+            # Construcción robusta de búsqueda vectorial
             query_embedding = await self.llm.embed(query)
             
-            where_clauses = ["dc.embedding IS NOT NULL"]
+            # Parámetros base
+            # IMPORTANTE: Convertir lista a string format '[v1,v2,...]' para pgvector/asyncpg
+            vec_fmt = f"[{','.join(map(str, query_embedding))}]"
+            
             params = {
-                "query_embedding": query_embedding,
-                "top_k": top_k
+                "query_embedding": vec_fmt,
+                "top_k": top_k,
+                "is_active": True
             }
             
-            if filters.get("is_active") is not None:
-                where_clauses.append("d.is_active = :is_active")
-                params["is_active"] = filters["is_active"]
-            
-            if filters.get("category"):
-                where_clauses.append("d.category = :category")
-                params["category"] = filters["category"]
-
-            if filters.get("version_label"):
-                where_clauses.append("d.version_label = :version_label")
-                params["version_label"] = filters["version_label"]
-            
-            where_str = " AND ".join(where_clauses)
-            
-            sql_query = text(f"""
+            # Query estática para máxima compatibilidad
+            sql_vector = text("""
                 SELECT 
-                    dc.id,
-                    dc.text,
-                    d.title,
-                    d.category,
-                    d.version_label,
-                    (dc.embedding <=> :query_embedding::vector) as distance
+                    dc.id, dc.text, d.title, d.category, d.version_label,
+                    (dc.embedding <=> CAST(:query_embedding AS vector)) as distance
                 FROM document_chunks dc
                 JOIN documents d ON dc.document_id = d.id
-                WHERE {where_str}
+                WHERE d.is_active = :is_active AND dc.embedding IS NOT NULL
                 ORDER BY distance
                 LIMIT :top_k
             """)
             
-            result = await session.execute(sql_query, params)
+            result = await session.execute(sql_vector, params)
             rows = result.fetchall()
             
             for row in rows:
                 doc_id = row[0]
-                if doc_id not in results_map:
-                    results_map[doc_id] = {
-                        "id": doc_id,
-                        "content": row[1],
-                        "source": f"{row[2]} ({row[4]})" if row[4] else row[2],
-                        "category": row[3],
-                        "version_label": row[4],
-                        "relevance": f"Distancia: {row[5]:.3f}",
-                        "method": "vector"
-                    }
+                results_map[doc_id] = {
+                    "id": doc_id,
+                    "content": row[1],
+                    "source": f"{row[2]} ({row[4]})" if row[4] else row[2],
+                    "category": row[3],
+                    "version_label": row[4],
+                    "relevance": f"Distancia: {row[5]:.3f}",
+                    "method": "vector"
+                }
             
         except Exception as e:
             logger.error(f"❌ Error en búsqueda vectorial: {e}")
@@ -146,39 +133,39 @@ class KnowledgeBase:
             if not keywords:
                 return []
             
+            # Construcción robusta de búsqueda por texto
             search_patterns = " | ".join(keywords)
             
-            # Construir filtros SQL
-            where_clauses = ["to_tsvector('spanish', dc.text) @@ query"]
-            params = {"query": search_patterns, "top_k": top_k}
+            params = {
+                "query_str": search_patterns,
+                "top_k": top_k,
+                "is_active": filters.get("is_active", True)
+            }
             
-            if filters.get("is_active") is not None:
-                where_clauses.append("d.is_active = :is_active")
-                params["is_active"] = filters["is_active"]
+            filter_clauses = ["d.is_active = :is_active", "to_tsvector('spanish', dc.text) @@ to_tsquery('spanish', :query_str)"]
             
             if filters.get("category"):
-                where_clauses.append("d.category = :category")
+                filter_clauses.append("d.category = :category")
                 params["category"] = filters["category"]
-
-            where_str = " AND ".join(where_clauses)
             
-            sql_query = text(f"""
+            where_stmt = " AND ".join(filter_clauses)
+            
+            sql_text = text(f"""
                 SELECT 
                     dc.id,
                     dc.text,
                     d.title,
                     d.category,
                     d.version_label,
-                    ts_rank(to_tsvector('spanish', dc.text), query) as relevance
+                    ts_rank(to_tsvector('spanish', dc.text), to_tsquery('spanish', :query_str)) as relevance
                 FROM document_chunks dc
-                JOIN documents d ON dc.document_id = d.id,
-                to_tsquery('spanish', :query) query
-                WHERE {where_str}
+                JOIN documents d ON dc.document_id = d.id
+                WHERE {where_stmt}
                 ORDER BY relevance DESC
                 LIMIT :top_k
             """)
             
-            result = await session.execute(sql_query, params)
+            result = await session.execute(sql_text, params)
             rows = result.fetchall()
             
             # Fallback a ILIKE si no hay resultados

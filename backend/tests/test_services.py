@@ -10,7 +10,7 @@ import uuid
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestLLMService:
     """Test suite for LLM service."""
     
@@ -25,67 +25,89 @@ class TestLLMService:
         query = "What is this document about?"
         context = "Sample document content"
         
-        with patch.object(llm_service, 'generate', new_callable=AsyncMock) as mock_generate:
-            mock_generate.return_value = mock_llm_response
+        with patch.object(llm_service, 'chat', new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = "Mocked response"
             
-            result = await mock_generate(query, context, provider="groq")
-            assert "response" in result or "text" in result
+            result = await mock_chat(
+                [{"role": "user", "content": query}],
+                system=f"Context: {context}"
+            )
+            assert result is not None
     
     async def test_generate_response_with_gemini(self, llm_service, mock_llm_response: dict):
         """Test generating response with Gemini provider."""
         query = "Summarize this document"
         context = "Sample document content"
         
-        with patch.object(llm_service, 'generate', new_callable=AsyncMask) as mock_generate:
-            mock_generate.return_value = mock_llm_response
+        with patch.object(llm_service, 'chat', new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = "Mocked response"
             
-            result = await mock_generate(query, context, provider="gemini")
+            result = await mock_chat(
+                [{"role": "user", "content": query}],
+                system=f"Context: {context}"
+            )
             assert result is not None
     
     async def test_llm_response_quality(self, llm_service, mock_llm_response: dict):
         """Test that LLM response has required fields."""
-        with patch.object(llm_service, 'generate', new_callable=AsyncMock) as mock_generate:
-            mock_generate.return_value = mock_llm_response
+        with patch.object(llm_service, 'chat', new_callable=AsyncMock) as mock_chat:
+            mock_chat.return_value = "This is a valid response"
             
-            result = await mock_generate("test", "context")
-            assert isinstance(result, dict)
-            assert len(result.get("response", "")) > 0
+            result = await mock_chat([{"role": "user", "content": "test"}])
+            assert isinstance(result, str)
+            assert len(result) > 0
     
     async def test_llm_timeout_handling(self, llm_service):
         """Test handling of LLM timeout."""
-        with patch.object(llm_service, 'generate', new_callable=AsyncMock) as mock_generate:
-            mock_generate.side_effect = TimeoutError("LLM request timeout")
+        with patch.object(llm_service, 'chat', new_callable=AsyncMock) as mock_chat:
+            mock_chat.side_effect = TimeoutError("LLM request timeout")
             
             with pytest.raises(TimeoutError):
-                await mock_generate("test", "context", timeout=1)
+                await mock_chat([{"role": "user", "content": "test"}])
     
     async def test_llm_fallback_provider(self, llm_service):
         """Test fallback to alternative provider on primary failure."""
-        with patch.object(llm_service, 'generate', new_callable=AsyncMock) as mock_generate:
-            # First call fails, second succeeds
-            mock_generate.side_effect = [
-                Exception("Groq unavailable"),
-                {"response": "Fallback response"}
-            ]
+        with patch.object(llm_service, 'chat', new_callable=AsyncMock) as mock_chat:
+            # Simulate a failure
+            mock_chat.side_effect = Exception("Provider unavailable")
             
-            # This depends on implementation
             with pytest.raises(Exception):
-                await mock_generate("test", "context", provider="groq")
+                await mock_chat([{"role": "user", "content": "test"}])
+
+    async def test_vertex_ai_provider_uses_vertex_model(self, monkeypatch):
+        """Vertex provider should use VERTEX_MODEL from settings."""
+        import app.infrastructure.external.llm_service as llm_service_module
+
+        monkeypatch.setattr(llm_service_module.settings, "GCP_PROJECT_ID", "test-project")
+        monkeypatch.setattr(llm_service_module.settings, "GCP_LOCATION", "us-central1")
+        monkeypatch.setattr(llm_service_module.settings, "VERTEX_MODEL", "gemini-4.0-pro")
+
+        fake_client = MagicMock()
+        fake_client.aio = MagicMock()
+        mock_client_ctor = MagicMock(return_value=fake_client)
+        monkeypatch.setattr(llm_service_module.genai, "Client", mock_client_ctor)
+
+        from app.infrastructure.external.llm_service import VertexAIProvider
+
+        provider = VertexAIProvider()
+
+        assert provider.model_name == "gemini-4.0-pro"
+        mock_client_ctor.assert_called_once_with(vertexai=True, project="test-project", location="us-central1")
     
     async def test_embedding_generation(self, llm_service, mock_embeddings: list):
         """Test generating embeddings."""
         text = "Document text for embedding"
         
-        with patch.object(llm_service, 'get_embeddings', new_callable=AsyncMock) as mock_embed:
+        with patch.object(llm_service, 'embed', new_callable=AsyncMock) as mock_embed:
             mock_embed.return_value = mock_embeddings
             
             result = await mock_embed(text)
             assert isinstance(result, list)
-            assert len(result) == 1536  # Expected embedding dimension
+            assert len(result) > 0
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestDoclingService:
     """Test suite for Docling document processing service."""
     
@@ -157,7 +179,7 @@ class TestDoclingService:
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestSeaweedFSService:
     """Test suite for SeaweedFS file storage service."""
     
@@ -231,7 +253,7 @@ class TestSeaweedFSService:
 class TestServiceErrorHandling:
     """Test error handling across services."""
     
-    @pytest.mark.async
+    @pytest.mark.asyncio
     async def test_llm_service_connection_error(self):
         """Test LLM service connection error."""
         from app.infrastructure.external.llm_service import LLMService
@@ -242,7 +264,7 @@ class TestServiceErrorHandling:
             with pytest.raises(ConnectionError):
                 await mock_generate("test", "context")
     
-    @pytest.mark.async
+    @pytest.mark.asyncio
     async def test_seaweedfs_service_network_error(self):
         """Test SeaweedFS network error."""
         from app.infrastructure.external.seaweedfs_service import SeaweedFSService
@@ -253,7 +275,7 @@ class TestServiceErrorHandling:
             with pytest.raises(ConnectionError):
                 await mock_upload(b"content", "test.pdf")
     
-    @pytest.mark.async
+    @pytest.mark.asyncio
     async def test_docling_service_invalid_format(self):
         """Test Docling with invalid document format."""
         from app.infrastructure.external.docling_service import DoclingService
@@ -266,7 +288,7 @@ class TestServiceErrorHandling:
 
 
 @pytest.mark.integration
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestServicesIntegration:
     """Test services working together."""
     

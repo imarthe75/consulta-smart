@@ -24,11 +24,61 @@ class UserCreateDTO(BaseModel):
 class UserUpdateDTO(BaseModel):
     """DTO para actualizar usuario"""
     username: Optional[str] = Field(None, min_length=3, max_length=50)
+    password: Optional[str] = Field(None, min_length=8, max_length=128)
     
     class Config:
         json_schema_extra = {
             "example": {
-                "username": "nuevo_usuario"
+                "username": "nuevo_usuario",
+                "password": "NuevaClaveSegura123"
+            }
+        }
+
+
+class UserLoginRequest(BaseModel):
+    """DTO para login de usuario"""
+    username: str
+    password: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "username": "usuario2026",
+                "password": "MiClaveSegura123"
+            }
+        }
+
+
+class UserRegisterRequest(BaseModel):
+    """DTO para registro de usuario"""
+    email: EmailStr
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=8, max_length=128)
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "usuario@example.com",
+                "username": "usuario2026",
+                "password": "MiClaveSegura123"
+            }
+        }
+
+
+class DocumentUploadRequest(BaseModel):
+    """DTO para carga de documentos"""
+    title: str = Field(..., min_length=3, max_length=255)
+    category: str
+    file_type: str = Field(..., min_length=2, max_length=20)
+    file_path: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "title": "Reglamento de Inscripción",
+                "category": "reglamento",
+                "file_type": "pdf",
+                "file_path": "documentos/reglamento.pdf"
             }
         }
 

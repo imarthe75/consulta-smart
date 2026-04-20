@@ -4,6 +4,7 @@ import { useAuthStore } from './stores/authStore'
 import Navigation from './components/Navigation'
 import ChatPage from './pages/ChatPage'
 import LoginPage from './pages/LoginPage'
+import WidgetPage from './pages/WidgetPage'
 import DocumentsPage from './pages/DocumentsPage'
 import ResultsPage from './pages/ResultsPage'
 
@@ -23,13 +24,13 @@ function AppContent() {
     return (
         <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/widget" element={<WidgetPage />} />
             <Route
                 path="/*"
                 element={
                     <ProtectedRoute>
-                        <div className="flex h-screen bg-gray-50">
-                            <Navigation />
-                            <main className="flex-1 flex flex-col overflow-hidden">
+                        <div className="h-screen w-full bg-white">
+                            <main className="h-full w-full overflow-hidden">
                                 <Routes>
                                     <Route path="/" element={<ChatPage />} />
                                     <Route path="/documentos" element={<DocumentsPage />} />

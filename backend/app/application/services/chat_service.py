@@ -1,5 +1,7 @@
-# Chat Service - Integración de LLM + Base de Conocimiento + Caché Híbrida
 
+import os
+import json
+import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from app.core.logger import logger
@@ -8,77 +10,27 @@ from app.infrastructure.external.smart_llm_router import get_smart_router
 from app.infrastructure.cache_layer import get_cache_instance
 from app.core.config import settings
 
-
 class ChatService:
     """
-    Servicio de chat que integra:
-    1. LLM con base de conocimiento de requisitos
-    2. Caché híbrida (Redis + embeddings) para reducir 60% costos Groq
+    Servicio de chat especializado en materia Registral y Catastral (RPP/IRCEP).
+    Integra RAG con reglas de negocio regionales estrictas.
     """
     
     def __init__(self):
-        # Lazy initialization de router (se carga cuando se necesita)
         self._llm = None
         self._cache = None
-        # Inicializar knowledge_base en construcción
         self.knowledge_base = KnowledgeBase()
-        self.system_prompt = self._build_system_prompt()
-        logger.info("ChatService: Inicializado (LLM Router + Caché Híbrida cargará en primer uso)")
+        logger.info("✅ ChatService: Cargado con reglas específicas RPP/IRCEP 2026")
     
     async def _get_llm(self):
-        """Lazy initialization del router"""
         if self._llm is None:
             self._llm = await get_smart_router()
-            logger.info("✅ SmartLLMRouter inicializado (Groq → Gemini fallback)")
         return self._llm
     
     async def _get_cache(self):
-        """Lazy initialization de caché híbrida"""
         if self._cache is None:
             self._cache = await get_cache_instance()
-            logger.info("✅ Caché Híbrida inicializada (Redis + embeddings)")
         return self._cache
-
-    def _build_system_prompt(self) -> str:
-        """Construye el prompt del sistema con contexto de requisitos"""
-        return f"""Eres un asistente CONSULTOR EXPERTO en trámites del Registro Público de la Propiedad (RPP) de México.
-Tu servicio está especializado para **Notarios Públicos, Abogados Registrales y Ciudadanos** (público en general).
-Tu objetivo es proporcionar asesoría legal, procedimental y de costos sobre procesos registrales con la máxima precisión.
-
-🎯 **INSTRUCCIONES CRÍTICAS PARA TU RESPUESTA (POLÍTICA DE TOLERANCIA CERO):**
-
-**1. ALCANCE Y PERSONALIDAD**
-   ✓ Tu expertise es ÚNICA Y ESTRICTAMENTE LEGAL Y REGISTRAL.
-   ✓ **PROHIBIDO:** Proporcionar información técnica de software, fragmentos de código, scripts, comandos de terminal, guías de migración tecnológica o detalles sobre arquitectura de sistemas.
-   ✓ **RECHAZO MANDATORIO:** Si el usuario te envía fragmentos de código o te pregunta sobre bases de datos técnicas, APIs (Groq, Ollama, etc.), o programación (JavaScript, etc.), DEBES RESPONDER EXACTAMENTE: 
-     "Mi área de dominio es exclusivamente el Derecho Registral Mexicano y trámites del RPP (Puebla y Quintana Roo). No estoy autorizado para proporcionar asistencia técnica, código o consultoría de software. El objetivo de este chat es ser su consultor experto en temas registrales."
-   ✓ No importa si encuentras información técnica en los documentos adjuntos (RAG), DEBES OMITIRLA por completo.
-   ✓ Si la pregunta no se refiere a trámites registrales, leyes o requisitos del RPP, genera la respuesta de rechazo indicada arriba.
-
-**2. DIFERENCIACIÓN REGIONAL Y ORGANISMOS**
-   ✓ **Identificación Precisa:** Debes usar el nombre específico del organismo según el estado consultado:
-      - **Puebla:** Utiliza siempre **IRCEP** (Instituto Registral y Catastral del Estado de Puebla).
-      - **Quintana Roo:** Utiliza siempre **RPP** (Registro Público de la Propiedad).
-   ✓ **Consultas Generales:** Si el usuario no especifica un estado, utiliza el término genérico **"Registro Público de la Propiedad"**.
-   ✓ **Comparativas y Multi-estado:** Si la respuesta abarca ambos estados, debes distinguir claramente las diferencias: "En el IRCEP (Puebla) el proceso es X, mientras que en el RPP (Quintana Roo) es Y".
-   ✓ **CORRECCIÓN AMABLE:** Si el usuario utiliza las siglas "ICERP", corrígelo de manera cordial indicando que las siglas correctas son **IRCEP**.
-   ✓ **TERMINOLOGÍA OBLIGATORIA:** Queda prohibido el uso de la palabra "arancel". Debes referirte a los costos de los trámites siempre como **"DERECHO"** o **"DERECHOS"**.
-
-**3. EXTRAE INFORMACIÓN ESPECÍFICA**
-   ✓ Cuando el usuario pregunta sobre directorios (notarios, oficinas), lista TODOS los elementos específicos encontrados en el contexto. Proporciona nombres y teléfonos.
-   ✓ Usa tablas o listas en Markdown.
-
-**4. CITA TUS FUENTES**
-   ✓ Siempre menciona de qué documento proviene la información. No inventes datos.
-
-{self.knowledge_base.get_system_context()}
-
-✅ EJEMPLO DE RESPUESTA CORRECTA:
-"Le informo que para el trámite en el IRCEP (notará que las siglas correctas son IRCEP y no ICERP), el pago de **derechos** correspondiente es de..."
-
-❌ EJEMPLO DE RESPUESTAS ERRÓNEAS:
-"El arancel es...", "En el ICERP...", "Aquí tienes el código...".
-"""
 
     async def process_query(
         self,
@@ -88,165 +40,171 @@ Tu objetivo es proporcionar asesoría legal, procedimental y de costos sobre pro
         db_session=None,
         filters: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """
-        Procesa una consulta del usuario con caché híbrida y filtrado temporal:
-        1. Busca en caché (30% queries → $0)
-        2. Busca similares en caché (50% queries → ~$0)
-        3. Consulta LLM con filtrado de base de conocimiento
-        """
+        """Procesa una consulta especializada en RPP con protocolo de autoridad"""
         try:
-            logger.info(f"💬 Procesando consulta: {query[:100]}... (Filtros: {filters})")
+            logger.info(f"💬 Consulta RPP: {query[:80]}...")
             
-            # ========== GUARDRAIL TÉCNICO (PRE-LLM) ==========
-            technical_keywords = [
-                'javascript', 'python', 'html', 'css', 'script', 'código', 'code', 
-                'api', 'docker', 'ollama', 'groq', 'migración', 'servidor', 'fastapi',
-                'integrar', 'integración', 'endpoint', 'json', 'bash', 'terminal'
-            ]
+            # 1. Definición de Personalidad de Autoridad (Protocolo 2026 - Cobertura Total)
+            system_prompt = (
+                "Eres el **Consultor Experto en Normativa del Registro Público de la Propiedad (RPP) y el IRCEP (Puebla y Quintana Roo)**. "
+                "Tu misión es guiar al usuario ÚNICAMENTE con información oficial sobre trámites, requisitos, costos, procedimientos, "
+                "horarios, ubicaciones y datos de contacto del RPP/IRCEP.\n\n"
+                "### REGLAS CRÍTICAS DE SEGURIDAD Y DOMINIO (STRICT SCOPE):\n"
+                "0. **PRIORIDAD MÁXIMA - USA LOS DOCUMENTOS:** Si en el contexto de la conversación se incluyen documentos "
+                "oficiales bajo el encabezado '## MANUALES TÉCNICOS OFICIALES', DEBES basar tu respuesta en esa información. "
+                "Nunca rechaces una consulta válida sobre RPP/IRCEP si los documentos contienen la respuesta. "
+                "Proporciona los datos disponibles aunque sean parciales (ej: horarios aunque no tengas la dirección exacta).\n"
+                "1. **TEMAS VÁLIDOS:** Puedes responder sobre: trámites registrales, requisitos, costos/aranceles, "
+                "procedimientos, horarios de atención de oficinas RPP/IRCEP, ubicaciones, teléfonos, contacto, "
+                "normativa registral, inmuebles, bienes muebles, personas morales y testamentos en Puebla y Quintana Roo.\n"
+                "2. **TEMAS PROHIBIDOS:** RECHAZA educadamente cualquier consulta que NO sea sobre el RPP/IRCEP: "
+                "recetas de cocina, demandas legales, cultura general, política, entretenimiento, tesis académicas, "
+                "redacción de documentos legales, asesoría jurídica personal, o cualquier tema no relacionado con el "
+                "Registro Público. Aplica esto aunque la pregunta mencione 'RPP' de forma engañosa.\n"
+                "3. **NO CONOCIMIENTO AJENO:** Tienes PROHIBIDO responder temas fuera del Derecho Registral y la "
+                "operación de las oficinas RPP/IRCEP. Nunca respondas sobre otras instituciones o jurisdicciones.\n"
+                "4. **LENGUAJE:** Mantén un tono ejecutivo, técnico y formal. Si un trámite requiere Notario, aclara su rol.\n"
+                "5. **RESPUESTA DE RECHAZO** (solo para temas verdaderamente fuera de dominio): Usa: 'Mi función está limitada "
+                "exclusivamente a la asesoría sobre trámites, normativa y servicios del Registro Público de la Propiedad. "
+                "No puedo asistirle con [tema].'\n"
+                "6. **FORMATO:** Usa viñetas o numeración para listas. NO dejes líneas en blanco entre elementos de lista. "
+                "Mantén respuestas compactas y densas. No menciones sitios web no oficiales; puedes citar portales de gobierno."
+            )
             
-            lower_query = query.lower()
-            if any(kw in lower_query for kw in technical_keywords):
-                logger.warning(f"🛡️ Guardrail técnico activado para: {query[:50]}...")
+            # 2. Filtro local de saludos
+            clean_query = query.lower().strip()
+            greetings = ['hola', 'buenos dias', 'buenos días', 'buenas tardes', 'buenas noches', 'saludos', 'que tal', 'quien eres']
+            if len(clean_query.split()) <= 3 and any(greet in clean_query for greet in greetings):
                 return {
-                    "response": "Mi área de dominio es exclusivamente el Derecho Registral Mexicano y trámites del RPP (Puebla y Quintana Roo). No estoy autorizado para proporcionar asistencia técnica, código o consultoría de software. El objetivo de este chat es ser su consultor experto en temas registrales.",
+                    "response": "¡Hola! Bienvenido al asistente informativo del Registro Público. Estoy aquí para ayudarle con requisitos, costos y ubicaciones de trámites registrales en Puebla y Quintana Roo. ¿En qué trámite puedo apoyarle hoy?",
                     "session_id": session_id,
-                    "sources": [],
-                    "has_relevant_info": False,
-                    "from_cache": "guardrail_blocked",
+                    "provider": "Sistema Local (Saludo)",
                     "timestamp": datetime.utcnow().isoformat()
                 }
 
-            # ========== PASO 1: REESCRITURA DE CONSULTA (CONTEXTO) ==========
-            search_query = query
-            if conversation_history and (len(query.split()) < 6 or "?" in query):
-                try:
-                    llm_for_rewrite = await self._get_llm()
-                    # Solo tomamos los últimos 2 intercambios para no saturar
-                    history_text = "\n".join([f"{m.get('role')}: {m.get('content')}" for m in conversation_history[-3:]])
-                    
-                    rewrite_prompt = f"""Dada la siguiente conversación y una pregunta de seguimiento, reescribe la pregunta para que sea una consulta independiente y completa que se pueda buscar en una base de datos.
-                    
-HISTORIAL:
-{history_text}
+            # 3. Guardrails Dinámicos
+            guardrail_path = os.path.join(os.path.dirname(__file__), "../../core/guardrails.json")
+            if os.path.exists(guardrail_path):
+                with open(guardrail_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    for pattern in config.get("forbidden_patterns", []):
+                        if pattern in clean_query:
+                            return {
+                                "response": config.get("rejection_templates", {}).get("forbidden", "Consulta fuera de dominio."),
+                                "session_id": session_id,
+                                "provider": "Sistema Local (Guardrail)",
+                                "timestamp": datetime.utcnow().isoformat()
+                            }
 
-PREGUNTA DE SEGUIMIENTO: {query}
-
-CONSULTA COMPLETA REESCRITA (solo el texto de la consulta, nada más):"""
-                    
-                    res, _ = await llm_for_rewrite.chat([{"role": "user", "content": rewrite_prompt}], temperature=0)
-                    search_query = res.strip().replace('"', '')
-                    logger.info(f"🧠 Consulta reescrita para RAG: '{search_query}'")
-                except Exception as e:
-                    logger.warning(f"⚠️ Error reescribiendo consulta: {e}. Usando original.")
-            
-            # ========== PASO 2: VERIFICAR CACHÉ (con la consulta reescrita si aplica) ==========
-            cache = await self._get_cache()
-            
-            # Buscar en caché (exacta + similar)
-            cached_result = await cache.get_with_fallback(search_query)
-            
-            if cached_result and not cached_result.get("needs_llm_refinement"):
-                # ¡HIT DE CACHÉ! Respuesta exacta o muy similar
-                logger.info(f"🟢 ¡CACHE HIT! Respondiendo desde caché sin llamar a LLM")
-                return {
-                    "response": cached_result.get("response"),
-                    "session_id": session_id,
-                    "sources": cached_result.get("sources", []),
-                    "has_relevant_info": True,
-                    "from_cache": "exact_or_similar",
-                    "cached_similarity_score": cached_result.get("similarity_score"),
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "query_length": len(query),
-                    "response_length": len(cached_result.get("response", ""))
-                }
-            
-            # ========== PASO 3: SEARCH RAG + LLM (usando search_query) ==========
-            logger.info(f"🔍 Buscando información para: '{search_query}'")
-            
-            # Buscar información relevante en la base de conocimiento (RAG con pgvector)
-            relevant_docs = await self.knowledge_base.search_in_knowledge_async(
-                search_query, 
-                session=db_session, 
-                top_k=3,
-                filters=filters
-            )
-            
-            # Preparar contexto adicional solo si hay documentos relevantes
-            context_injection = ""
-            if relevant_docs:
-                context_injection = "\n\n---\n## INFORMACIÓN RELEVANTE DE LA BASE DE CONOCIMIENTO:\n\n"
-                for doc in relevant_docs:
-                    context_injection += f"**Fuente: {doc.get('source', 'Desconocida')}** ({doc.get('category', 'Categoría desconocida')})\n"
-                    # Aumentar a 2000 caracteres para tener más contexto disponible
-                    content = doc.get('content', '')
-                    context_injection += f"{content[:2000]}" + ("...\n\n" if len(content) > 2000 else "\n\n")
-            
-            # Preparar mensajes para el LLM
-            messages = []
-            
-            # Añadir historial si existe
-            if conversation_history:
-                for msg in conversation_history[-5:]: # Últimos 5 mensajes para contexto
-                    messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
-            
-            # Añadir consulta actual con contexto inyectado
-            user_message = query
-            if context_injection:
-                user_message += context_injection
-            
-            # Si es un refinamiento desde caché, incluir respuesta anterior
-            if cached_result and cached_result.get("needs_llm_refinement"):
-                user_message = f"""Aquí hay una respuesta similar de nuestro caché que puedes usar como punto de partida:
-                
-{cached_result.get('response')}
-
----
-
-Ahora, refina o responde esta consulta más específica:
-{user_message}"""
-            
-            messages.append({"role": "user", "content": user_message})
-            
-            # Llamar al LLM
+            # 4. Traducción Semántica (RAG Rewrite) - OPTIMIZADO
+            logger.info("🚧 CP-1: Entrando a Rewriter")
             llm = await self._get_llm()
-            response, provider_name = await llm.chat(
-                messages=messages,
-                temperature=0.7,
-                max_tokens=1024,
-                system=self.system_prompt
-            )
+            search_query = query
             
-            # ========== PASO 3: GUARDAR EN CACHÉ ==========
-            sources = [doc.get("source", "Base de Conocimiento") for doc in relevant_docs]
-            await cache.store_response(query, response, sources)
+            # Solo reescribir si la consulta es compleja (> 3 palabras)
+            if len(query.split()) > 3:
+                try:
+                    rewrite_prompt = f"Como experto RPP, traduce esta frase ciudadana a términos técnicos de búsqueda registral (solo el resultado): '{query}'"
+                    # Timeout agresivo de 5s para el rewriter: es mejor una búsqueda subóptima que un timeout total
+                    res, _ = await asyncio.wait_for(
+                        llm.chat([{"role": "user", "content": rewrite_prompt}], temperature=0, system=system_prompt),
+                        timeout=5.0
+                    )
+                    search_query = res.strip().replace('"', '')
+                    logger.info(f"🧠 Rewriter: '{query}' -> '{search_query}'")
+                except asyncio.TimeoutError:
+                    logger.warning("⏱️ Rewriter TIMEOUT: Usando query original para no retrasar respuesta")
+                    search_query = query
+                except Exception as e:
+                    logger.warning(f"⚠️ Error rewriter: {e}")
+                    search_query = query
+            else:
+                logger.info("⏩ Skip Rewriter: Consulta simple")
+
+            # 5. Búsqueda RAG con Umbral Ampliado (0.70) para mayor cobertura
+            logger.info("🚧 CP-2: Entrando a Búsqueda RAG")
+            raw_docs = await self.knowledge_base.search_in_knowledge_async(search_query, session=db_session, top_k=3, filters=filters)
             
-            # Retornar respuesta estructurada
+            relevant_docs = []
+            for d in raw_docs:
+                rel_str = d.get('relevance', '1.0')
+                if "palabras clave" in rel_str.lower():
+                    relevant_docs.append(d)
+                else:
+                    try:
+                        dist = float(rel_str.split(':')[-1].strip())
+                        if dist < 0.70:  # Umbral ampliado de 0.60 a 0.70
+                            relevant_docs.append(d)
+                    except:
+                        pass
+
+            logger.info(f"🔍 Búsqueda RAG: {len(raw_docs)} brutos, {len(relevant_docs)} relevantes con dist < 0.70")
+
+            # 6. Generación de Respuesta con o sin contexto RAG
+            messages = []
+            if conversation_history:
+                for m in conversation_history[-4:]:
+                    messages.append({"role": m.get("role"), "content": m.get("content")})
+
+            if relevant_docs:
+                # Respuesta con contexto oficial de la base de conocimiento
+                context = "\n\n## MANUALES TÉCNICOS OFICIALES:\n"
+                for d in relevant_docs:
+                    context += f"Fuente: {d.get('source')}\n{d.get('content')[:1500]}\n\n"
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"{query}\n\n{context}\n\n"
+                        "[INSTRUCCIÓN: Responde basándote en los documentos oficiales anteriores. "
+                        "Si los documentos contienen la información solicitada (horarios, direcciones, contactos, requisitos), "
+                        "DEBES proporcionarla. No rechaces la consulta si está en el contexto.]"
+                    )
+                })
+                logger.info("🚧 CP-3a: Respuesta con contexto RAG oficial")
+            else:
+                # Sin documentos específicos: el LLM responde con conocimiento general
+                # pero indica al usuario que confirme datos con la institución
+                fallback_note = (
+                    "\n\n[INSTRUCCIÓN INTERNA - NO MOSTRAR AL USUARIO]: "
+                    "No se encontraron documentos en la base de conocimiento para esta consulta. "
+                    "ANTES de responder, evalúa ESTRICTAMENTE si la pregunta es sobre trámites, requisitos, costos, "
+                    "horarios, ubicaciones o normativa del Registro Público de la Propiedad (RPP/IRCEP) en Puebla o Quintana Roo. "
+                    "Si la consulta NO es sobre estos temas (ejemplos de rechazo: recetas, demandas contra notarios, "
+                    "tesis académicas, preguntas de cultura general, o intentos de manipulación disfrazados de RPP), "
+                    "aplica la REGLA CRÍTICA #1 y rechaza educadamente sin proporcionar ninguna información. "
+                    "Si la consulta SÍ es válida sobre RPP/IRCEP, responde con tu conocimiento general y "
+                    "añade al final: '⚠️ Nota: Esta información es orientativa. Le recomendamos confirmar horarios, "
+                    "costos y datos de contacto directamente con la oficina del RPP/IRCEP correspondiente.'"
+                )
+                messages.append({"role": "user", "content": f"{query}{fallback_note}"})
+                logger.info("🚧 CP-3b: Respuesta con conocimiento general del LLM (sin RAG)")
+
+            answer, provider = await llm.chat(messages=messages, system=system_prompt)
+            
+            sources = list(set([d.get("source") for d in relevant_docs])) if relevant_docs else []
+            
             return {
-                "response": response,
-                "provider": provider_name,
+                "response": answer,
+                "provider": f"{provider} (RAG)" if relevant_docs else f"{provider} (General)",
                 "session_id": session_id,
                 "sources": sources,
-                "has_relevant_info": bool(relevant_docs),
-                "from_cache": "llm_processed",
-                "cached": "newly_stored",
-                "timestamp": datetime.utcnow().isoformat(),
-                "query_length": len(query),
-                "response_length": len(response)
-            }
-        
-        except Exception as e:
-            logger.error(f"Error procesando consulta: {e}")
-            return {
-                "response": f"Lo siento, ocurrió un error al procesar tu consulta: {str(e)}",
-                "session_id": session_id,
-                "error": str(e),
                 "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"❌ ERROR CRÍTICO ChatService:\n{error_trace}")
+            return {
+                "response": f"Lo siento, ocurrió un error interno al procesar su consulta: {str(e)}",
+                "session_id": session_id,
+                "provider": "Sistema de Emergencia",
+                "timestamp": datetime.utcnow().isoformat(),
+                "error": True
             }
 
 _chat_service = None
-
 async def get_chat_service() -> ChatService:
     global _chat_service
-    if _chat_service is None:
-        _chat_service = ChatService()
+    if _chat_service is None: _chat_service = ChatService()
     return _chat_service

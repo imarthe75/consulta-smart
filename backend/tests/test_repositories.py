@@ -11,7 +11,7 @@ import uuid
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestUserRepository:
     """Test suite for UserRepository."""
     
@@ -96,7 +96,7 @@ class TestUserRepository:
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestDocumentRepository:
     """Test suite for DocumentRepository."""
     
@@ -184,7 +184,7 @@ class TestDocumentRepository:
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestChatSessionRepository:
     """Test suite for ChatSessionRepository."""
     
@@ -244,7 +244,7 @@ class TestChatSessionRepository:
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestVectorStore:
     """Test suite for VectorStore repository."""
     

@@ -1,0 +1,38 @@
+🚀 Iniciando prueba de estrés y funcionalidad ConsultaRPP 2026...
+🔑 Intentando login como: demo@example.com
+✅ Autenticación exitosa.
+💬 Enviando consulta: 'Me aceptan una copia de mis papeles para pedir una constancia de libertad de gravámen?'
+DEBUG Full Response: {
+  "status": "success",
+  "data": {
+    "session_id": "4db959e1-4a8d-48d5-9994-1490163c9109",
+    "response": "Error interno en el procesamiento: All LLM providers failed. Last error: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'Publisher Model `projects/dmc-chorizon/locations/us-central1/publishers/google/models/gemini-2.0-flash` was not found or your project does not have access to it. Please ensure you are using a valid model version. For more information, see: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions', 'status': 'NOT_FOUND'}}",
+    "sources": [],
+    "has_relevant_knowledge": false,
+    "conversation_history": [
+      {
+        "role": "user",
+        "content": "Me aceptan una copia de mis papeles para pedir una constancia de libertad de grav\u00e1men?",
+        "timestamp": "2026-04-14T04:26:07.517907"
+      },
+      {
+        "role": "assistant",
+        "content": "Error interno en el procesamiento: All LLM providers failed. Last error: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'Publisher Model `projects/dmc-chorizon/locations/us-central1/publishers/google/models/gemini-2.0-flash` was not found or your project does not have access to it. Please ensure you are using a valid model version. For more information, see: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions', 'status': 'NOT_FOUND'}}",
+        "timestamp": "2026-04-14T04:26:46.711157"
+      }
+    ],
+    "cache_info": {
+      "from_cache": null,
+      "similarity_score": null,
+      "query_length": null,
+      "response_length": null
+    }
+  }
+}
+
+🤖 RESPUESTA DEL ASISTENTE EXPERTO:
+--------------------------------------------------
+Sin respuesta
+--------------------------------------------------
+
+✅ Prueba finalizada con éxito. Proveedor utilizado: N/A

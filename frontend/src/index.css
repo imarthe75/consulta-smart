@@ -70,3 +70,81 @@ body {
 .animate-slideUp {
     animation: slideUp 0.3s ease-out;
 }
+
+/* Estilos de Tabla y Markdown en Chat */
+.markdown-content table {
+    width: 100%;
+    margin-top: 1rem;
+    margin-bottom: 1rem;
+    border-collapse: collapse;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    font-size: 0.85em;
+    background: white;
+}
+
+.markdown-content th {
+    background-color: #f8fafc;
+    color: #1e293b;
+    font-weight: 600;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+.markdown-content td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+/* Compactación ULTRADENSA de Párrafos y Listas */
+.markdown-content p, .prose p {
+    margin-top: 0 !important;
+    margin-bottom: 0.1rem !important;
+    line-height: 1.2;
+    padding: 0 !important;
+}
+
+.markdown-content ul, .markdown-content ol, .prose ul, .prose ol {
+    margin-top: 0.05rem !important;
+    margin-bottom: 0.1rem !important;
+    padding-left: 1.2rem !important;
+}
+
+.markdown-content li, .prose li {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    padding: 0 !important;
+    line-height: 1.2;
+}
+
+.markdown-content h1, .markdown-content h2, .markdown-content h3, .prose h1, .prose h2, .prose h3 {
+    margin-top: 0.4rem !important;
+    margin-bottom: 0.1rem !important;
+    font-weight: 700;
+    color: #0f172a;
+    line-height: 1.2;
+}
+
+.prose blockquote {
+    margin-top: 0.3rem !important;
+    margin-bottom: 0.3rem !important;
+}
+
+.markdown-content tr:last-child td {
+    border-bottom: none;
+}
+
+.markdown-content tr:hover {
+    background-color: #f1f5f922;
+}
+
+.markdown-content strong {
+    font-weight: 700;
+    color: inherit;
+}
+
+.markdown-content strong {
+    font-weight: 700;
+    color: inherit;
+}

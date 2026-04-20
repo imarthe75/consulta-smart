@@ -1,0 +1,44 @@
+🚀 Iniciando prueba de estrés y funcionalidad ConsultaRPP 2026...
+🔑 Intentando login como: demo@example.com
+✅ Autenticación exitosa.
+💬 Enviando consulta: 'Me aceptan una copia de mis papeles para pedir una constancia de libertad de gravámen?'
+DEBUG Full Response: {
+  "status": "success",
+  "data": {
+    "session_id": "a603975c-a927-4c12-9d73-aba689ca5ebb",
+    "response": "**Constancia de Libertad de Grav\u00e1men**\n\nLa constancia de libertad de grav\u00e1men es un documento que acredita que un bien inmueble se encuentra libre de grav\u00e1menes, es decir, que no tiene cargas, hipotecas o cualquier otro tipo de limitaci\u00f3n que afecte su propiedad.\n\n**Requisitos para solicitar una constancia de libertad de grav\u00e1men**\n\nPara solicitar una constancia de libertad de grav\u00e1men, es necesario presentar los siguientes documentos:\n\n*   Identificaci\u00f3n oficial del propietario del bien inmueble (INE, pasaporte, etc.)\n*   Comprobante de propiedad del bien inmueble (escritura p\u00fablica, contrato de compraventa, etc.)\n*   Clave catastral del bien inmueble\n*   Pago de los derechos correspondientes\n\n**\u00bfSe acepta una copia de los papeles para pedir una constancia de libertad de grav\u00e1men?**\n\nEn general, no se acepta una copia de los papeles para pedir una constancia de libertad de grav\u00e1men. Es necesario presentar los documentos originales o copias certificadas por una autoridad competente.\n\nSin embargo, es importante verificar con la autoridad competente en tu entidad federativa para conocer los requisitos espec\u00edficos y los documentos necesarios para solicitar una constancia de libertad de grav\u00e1men.\n\n**Conclusi\u00f3n**\n\nEn resumen, para solicitar una constancia de libertad de grav\u00e1men, es necesario presentar los documentos originales o copias certificadas, y no se acepta una copia simple de los papeles. Es importante verificar con la autoridad competente en tu entidad federativa para conocer los requisitos espec\u00edficos y los documentos necesarios.\n\n---\n*LLM: groq (RAG)*",
+    "sources": [
+      "RPP Registry - rpp-registry > DICCIONARIO_ACTOS_REGISTRABLES.md (2024-V1)",
+      "RPP Registry - rpp-registry > DERECHOS_COSTOS_QUINTANA_ROO.md (2024-V1)",
+      "RPP Registry - rpp-registry > rpp-registry > DERECHOS_COSTOS_QUINTANA_ROO.md (2024-V1)",
+      "RPP Registry - rpp-registry > puebla > PROCEDIMIENTOS.md (2024-V1)",
+      "RPP Registry - rpp-registry > OFICINAS_CONTACTOS_RPP.md (2024-V1)"
+    ],
+    "has_relevant_knowledge": false,
+    "conversation_history": [
+      {
+        "role": "user",
+        "content": "Me aceptan una copia de mis papeles para pedir una constancia de libertad de grav\u00e1men?",
+        "timestamp": "2026-04-14T12:34:39.388147"
+      },
+      {
+        "role": "assistant",
+        "content": "**Constancia de Libertad de Grav\u00e1men**\n\nLa constancia de libertad de grav\u00e1men es un documento que acredita que un bien inmueble se encuentra libre de grav\u00e1menes, es decir, que no tiene cargas, hipotecas o cualquier otro tipo de limitaci\u00f3n que afecte su propiedad.\n\n**Requisitos para solicitar una constancia de libertad de grav\u00e1men**\n\nPara solicitar una constancia de libertad de grav\u00e1men, es necesario presentar los siguientes documentos:\n\n*   Identificaci\u00f3n oficial del propietario del bien inmueble (INE, pasaporte, etc.)\n*   Comprobante de propiedad del bien inmueble (escritura p\u00fablica, contrato de compraventa, etc.)\n*   Clave catastral del bien inmueble\n*   Pago de los derechos correspondientes\n\n**\u00bfSe acepta una copia de los papeles para pedir una constancia de libertad de grav\u00e1men?**\n\nEn general, no se acepta una copia de los papeles para pedir una constancia de libertad de grav\u00e1men. Es necesario presentar los documentos originales o copias certificadas por una autoridad competente.\n\nSin embargo, es importante verificar con la autoridad competente en tu entidad federativa para conocer los requisitos espec\u00edficos y los documentos necesarios para solicitar una constancia de libertad de grav\u00e1men.\n\n**Conclusi\u00f3n**\n\nEn resumen, para solicitar una constancia de libertad de grav\u00e1men, es necesario presentar los documentos originales o copias certificadas, y no se acepta una copia simple de los papeles. Es importante verificar con la autoridad competente en tu entidad federativa para conocer los requisitos espec\u00edficos y los documentos necesarios.\n\n---\n*LLM: groq (RAG)*",
+        "timestamp": "2026-04-14T12:34:45.026340"
+      }
+    ],
+    "cache_info": {
+      "from_cache": null,
+      "similarity_score": null,
+      "query_length": null,
+      "response_length": null
+    }
+  }
+}
+
+🤖 RESPUESTA DEL ASISTENTE EXPERTO:
+--------------------------------------------------
+Sin respuesta
+--------------------------------------------------
+
+✅ Prueba finalizada con éxito. Proveedor utilizado: N/A

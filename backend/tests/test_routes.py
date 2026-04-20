@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch, AsyncMock
 import json
+import asyncio
 
 
 @pytest.mark.unit
@@ -18,6 +19,14 @@ class TestHealthRoutes:
         """Create a test client for the FastAPI app."""
         # Import here to avoid circular imports
         from main import app
+        from app.core.database import init_db
+        
+        # Initialize database before running tests
+        try:
+            asyncio.run(init_db())
+        except:
+            pass  # Already initialized or no DB connection
+        
         return TestClient(app)
     
     def test_health_endpoint_exists(self, client):
@@ -52,6 +61,13 @@ class TestAuthRoutes:
     def client(self):
         """Create a test client."""
         from main import app
+        from app.core.database import init_db
+        
+        try:
+            asyncio.run(init_db())
+        except:
+            pass
+        
         return TestClient(app)
     
     def test_register_endpoint_exists(self, client):
@@ -112,6 +128,13 @@ class TestDocumentRoutes:
     def client(self):
         """Create a test client."""
         from main import app
+        from app.core.database import init_db
+        
+        try:
+            asyncio.run(init_db())
+        except:
+            pass
+        
         return TestClient(app)
     
     def test_documents_list_endpoint_exists(self, client):
@@ -135,6 +158,13 @@ class TestChatRoutes:
     def client(self):
         """Create a test client."""
         from main import app
+        from app.core.database import init_db
+        
+        try:
+            asyncio.run(init_db())
+        except:
+            pass
+        
         return TestClient(app)
     
     def test_chat_sessions_endpoint_exists(self, client):
@@ -159,6 +189,13 @@ class TestRoutesCORS:
     def client(self):
         """Create a test client."""
         from main import app
+        from app.core.database import init_db
+        
+        try:
+            asyncio.run(init_db())
+        except:
+            pass
+        
         return TestClient(app)
     
     def test_health_allows_cors(self, client):

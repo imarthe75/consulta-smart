@@ -84,6 +84,50 @@ async def login(
         logger.error(f"Error en login: {str(e)}")
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
+@router.get("/guest")
+@router.post("/guest")
+async def guest_login(
+    db: AsyncSession = Depends(get_session)
+) -> dict:
+    """
+    Endpoint para Login Anónimo (Widget).
+    Genera un token para un usuario 'guest'.
+    """
+    try:
+        email = "guest@consultarpp.mx"
+        logger.info(f"Login anónimo solicitado para Widget")
+        user_repo = PostgresUserRepository(db)
+        
+        user_entity = await user_repo.find_by_email(email)
+        
+        if not user_entity:
+            logger.info("Creando cuenta de invitado por primera vez...")
+            from app.domain.entities.user import User
+            user_entity = User(
+                email=email,
+                username="Invitado",
+                password_hash=get_password_hash("guest_secret_2026_rpp"),
+                roles=["guest"]
+            )
+            await user_repo.create(user_entity)
+            await db.commit()
+            user_entity = await user_repo.find_by_email(email)
+        
+        access_token = create_access_token(
+            data={"sub": user_entity.email, "user_id": str(user_entity.id), "roles": user_entity.roles}
+        )
+        
+        return {
+            "access_token": access_token, 
+            "token_type": "bearer",
+            "user_id": str(user_entity.id),
+            "email": user_entity.email,
+            "role": "guest"
+        }
+    except Exception as e:
+        logger.error(f"Error en guest login: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno en sesión de invitado")
+
 @router.post("/register")
 async def register(
     request: RegisterRequest,

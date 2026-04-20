@@ -1,0 +1,44 @@
+🚀 Iniciando prueba de estrés y funcionalidad ConsultaRPP 2026...
+🔑 Intentando login como: demo@example.com
+✅ Autenticación exitosa.
+💬 Enviando consulta: 'Me aceptan una copia de mis papeles para pedir una constancia de libertad de gravámen?'
+DEBUG Full Response: {
+  "status": "success",
+  "data": {
+    "session_id": "33dc1e03-d8ef-46cf-865d-9019c7b18c40",
+    "response": "## Respuesta a su Pregunta\n\nEn cuanto a su pregunta sobre si se acepta una copia de sus papeles para pedir una constancia de libertad de grav\u00e1men, la respuesta puede variar dependiendo de la instituci\u00f3n o entidad con la que est\u00e9 tratando. Sin embargo, en general, para obtener una constancia de libertad de grav\u00e1men, se requiere presentar documentos originales o copias certificadas de los mismos, ya que estos documentos son fundamentales para verificar el estado legal de una propiedad.\n\n### Documentos Necesarios\n\nPara solicitar una constancia de libertad de grav\u00e1men, normalmente se necesitan los siguientes documentos:\n\n1. **Identificaci\u00f3n oficial**: ComoINE, pasaporte, etc.\n2. **Comprobante de propiedad**: Escritura p\u00fablica, contrato de compraventa, etc.\n3. **Certificado de libertad de grav\u00e1menes anterior** (si aplica): Si ya se ha solicitado una constancia previamente.\n4. **Otros documentos**: Dependiendo del caso, podr\u00edan ser necesarios otros documentos como actas de assemblies, poderes notariales, etc.\n\n### \u00bfSe Aceptan Copias?\n\nEn algunos casos, las copias de los documentos pueden ser aceptadas siempre y cuando est\u00e9n debidamente certificadas por una autoridad competente (como un notario p\u00fablico). Sin embargo, esto puede variar seg\u00fan las pol\u00edticas de la instituci\u00f3n o entidad con la que est\u00e9 tratando.\n\n### Recomendaciones\n\n- **Verificar con la instituci\u00f3n**: Antes de presentar su solicitud, es recomendable verificar con la instituci\u00f3n o entidad correspondiente si aceptan copias de documentos y bajo qu\u00e9 condiciones.\n- **Certificar copias**: Si decides presentar copias, aseg\u00farate de que est\u00e9n certificadas por un notario p\u00fablico o la autoridad competente.\n- **Preparar documentos originales**: Si es posible, es mejor presentar los documentos originales para evitar cualquier retraso o problema en el proceso.\n\nEspero que esta informaci\u00f3n le sea \u00fatil. Si tiene m\u00e1s preguntas o necesita detalles espec\u00edficos sobre un caso en particular, no dude en preguntar.\n\n---\n*LLM: groq (RAG)*",
+    "sources": [
+      "RPP Registry - rpp-registry > DERECHOS_COSTOS_QUINTANA_ROO.md (2024-V1)",
+      "RPP Registry - rpp-registry > DICCIONARIO_ACTOS_REGISTRABLES.md (2024-V1)",
+      "RPP Registry - rpp-registry > puebla > PROCEDIMIENTOS.md (2024-V1)",
+      "RPP Registry - rpp-registry > rpp-registry > DERECHOS_COSTOS_QUINTANA_ROO.md (2024-V1)",
+      "RPP Registry - rpp-registry > OFICINAS_CONTACTOS_RPP.md (2024-V1)"
+    ],
+    "has_relevant_knowledge": false,
+    "conversation_history": [
+      {
+        "role": "user",
+        "content": "Me aceptan una copia de mis papeles para pedir una constancia de libertad de grav\u00e1men?",
+        "timestamp": "2026-04-14T12:30:32.935772"
+      },
+      {
+        "role": "assistant",
+        "content": "## Respuesta a su Pregunta\n\nEn cuanto a su pregunta sobre si se acepta una copia de sus papeles para pedir una constancia de libertad de grav\u00e1men, la respuesta puede variar dependiendo de la instituci\u00f3n o entidad con la que est\u00e9 tratando. Sin embargo, en general, para obtener una constancia de libertad de grav\u00e1men, se requiere presentar documentos originales o copias certificadas de los mismos, ya que estos documentos son fundamentales para verificar el estado legal de una propiedad.\n\n### Documentos Necesarios\n\nPara solicitar una constancia de libertad de grav\u00e1men, normalmente se necesitan los siguientes documentos:\n\n1. **Identificaci\u00f3n oficial**: ComoINE, pasaporte, etc.\n2. **Comprobante de propiedad**: Escritura p\u00fablica, contrato de compraventa, etc.\n3. **Certificado de libertad de grav\u00e1menes anterior** (si aplica): Si ya se ha solicitado una constancia previamente.\n4. **Otros documentos**: Dependiendo del caso, podr\u00edan ser necesarios otros documentos como actas de assemblies, poderes notariales, etc.\n\n### \u00bfSe Aceptan Copias?\n\nEn algunos casos, las copias de los documentos pueden ser aceptadas siempre y cuando est\u00e9n debidamente certificadas por una autoridad competente (como un notario p\u00fablico). Sin embargo, esto puede variar seg\u00fan las pol\u00edticas de la instituci\u00f3n o entidad con la que est\u00e9 tratando.\n\n### Recomendaciones\n\n- **Verificar con la instituci\u00f3n**: Antes de presentar su solicitud, es recomendable verificar con la instituci\u00f3n o entidad correspondiente si aceptan copias de documentos y bajo qu\u00e9 condiciones.\n- **Certificar copias**: Si decides presentar copias, aseg\u00farate de que est\u00e9n certificadas por un notario p\u00fablico o la autoridad competente.\n- **Preparar documentos originales**: Si es posible, es mejor presentar los documentos originales para evitar cualquier retraso o problema en el proceso.\n\nEspero que esta informaci\u00f3n le sea \u00fatil. Si tiene m\u00e1s preguntas o necesita detalles espec\u00edficos sobre un caso en particular, no dude en preguntar.\n\n---\n*LLM: groq (RAG)*",
+        "timestamp": "2026-04-14T12:31:24.779927"
+      }
+    ],
+    "cache_info": {
+      "from_cache": null,
+      "similarity_score": null,
+      "query_length": null,
+      "response_length": null
+    }
+  }
+}
+
+🤖 RESPUESTA DEL ASISTENTE EXPERTO:
+--------------------------------------------------
+Sin respuesta
+--------------------------------------------------
+
+✅ Prueba finalizada con éxito. Proveedor utilizado: N/A

@@ -11,7 +11,7 @@ import uuid
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestDatabaseConnection:
     """Test suite for database connections."""
     
@@ -55,7 +55,7 @@ class TestDatabaseConnection:
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestDatabaseModels:
     """Test suite for database models."""
     
@@ -86,7 +86,7 @@ class TestDatabaseModels:
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestDatabaseTransactions:
     """Test suite for database transactions."""
     
@@ -126,7 +126,7 @@ class TestDatabaseTransactions:
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestDatabaseMigrations:
     """Test suite for database migrations."""
     
@@ -151,7 +151,7 @@ class TestDatabaseMigrations:
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestDatabaseQueries:
     """Test suite for database query operations."""
     
@@ -208,7 +208,7 @@ class TestDatabaseQueries:
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestDatabaseIndexes:
     """Test suite for database indexes."""
     
@@ -233,7 +233,8 @@ class TestDatabaseIndexes:
 
 
 @pytest.mark.unit
-@pytest.mark.async  
+@pytest.mark.asyncio
+
 class TestDatabaseConstraints:
     """Test suite for database constraints."""
     
@@ -254,7 +255,7 @@ class TestDatabaseConstraints:
 
 
 @pytest.mark.integration
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestDatabaseIntegration:
     """Integration tests for database operations."""
     
