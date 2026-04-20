@@ -2,19 +2,21 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings, CORS_ORIGINS
 from app.core.logger import setup_logging, logger
+
+# ✅ Configurar logging ANTES de importar rutas
+setup_logging(settings.LOG_LEVEL)
+
 from app.core.database import init_db as init_database, close_db
 from app.routes import health, documents, chat, auth, search
-
-# ✅ IMPORTA el router de performance (ajusta ruta si lo moviste)
+from fastapi.staticfiles import StaticFiles
 from app.routes.perf_test import router as perf_router
-
-# Configurar logging
-setup_logging(settings.LOG_LEVEL)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -56,11 +58,14 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Middleware CORS
+# Middleware CORS - allow_origins=* para widget embebible en cualquier sitio
+_cors_origins = CORS_ORIGINS
+_allow_all = "*" in _cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"] if _allow_all else _cors_origins,
+    allow_credentials=False if _allow_all else True,
     allow_methods=["*"],
     allow_headers=["*"],
     max_age=600
@@ -75,6 +80,14 @@ app.include_router(search.router)
 
 # ✅ Incluir endpoint de performance (sin auth)
 app.include_router(perf_router)
+
+# ✅ Servir archivos estáticos (Widget)
+static_dir = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
 @app.get("/")
 async def root():

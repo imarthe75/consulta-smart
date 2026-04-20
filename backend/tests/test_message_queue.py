@@ -277,7 +277,7 @@ class TestTaskChaining:
 
 
 @pytest.mark.integration
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestTaskResultsHandling:
     """Test handling task results."""
     

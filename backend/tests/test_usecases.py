@@ -10,7 +10,7 @@ import uuid
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestDocumentUseCases:
     """Test suite for document-related use cases."""
     
@@ -111,7 +111,7 @@ class TestDocumentUseCases:
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestChatUseCases:
     """Test suite for chat-related use cases."""
     
@@ -195,7 +195,7 @@ class TestChatUseCases:
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestSearchUseCases:
     """Test suite for search-related use cases."""
     
@@ -256,7 +256,7 @@ class TestSearchUseCases:
 
 
 @pytest.mark.unit
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestAuthUseCases:
     """Test suite for authentication use cases."""
     
@@ -326,7 +326,7 @@ class TestAuthUseCases:
 
 
 @pytest.mark.integration
-@pytest.mark.async
+@pytest.mark.asyncio
 class TestUseCasesIntegration:
     """Test use cases working together."""
     

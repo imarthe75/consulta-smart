@@ -29,4 +29,22 @@ export const useAuthStore = create((set) => ({
 
     setUser: (user) => set({ user }),
     setAuthenticated: (isAuth) => set({ isAuthenticated: isAuth }),
+    
+    guestLogin: async () => {
+        try {
+            const { authAPI } = await import('../services/api')
+            const response = await authAPI.guestLogin()
+            const { access_token, user_id, email, role } = response.data
+            localStorage.setItem('token', access_token)
+            set({ 
+                isAuthenticated: true, 
+                user: { id: user_id, email, role }, 
+                token: access_token 
+            })
+            return response.data
+        } catch (error) {
+            console.error('Guest login failed:', error)
+            throw error
+        }
+    }
 }))

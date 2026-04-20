@@ -179,6 +179,19 @@ async def chat_query(
             # Continuamos aunque falle el guardado para no bloquear al usuario
         
         # ========== 3. PROCESAR CONSULTA CON RAG + LLM ==========
+        # Recuperar historial si no se proporcionó (para asegurar contexto)
+        history = query.conversation_history or []
+        if not history and query.session_id:
+            try:
+                db_messages = await session_repo.get_messages(query.session_id, limit=10)
+                history = [
+                    {"role": m.role, "content": m.content}
+                    for m in db_messages if m.role in ['user', 'assistant']
+                ]
+                logger.info(f"📜 Historial recuperado de BD para contexto: {len(history)} mensajes")
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudo cargar historial de BD: {e}")
+
         # Obtener instancia del servicio
         chat_service = await get_chat_service()
         
@@ -186,19 +199,20 @@ async def chat_query(
         result = await chat_service.process_query(
             query=query.message,
             session_id=query.session_id,
-            conversation_history=query.conversation_history or [],
-            db_session=db_session, # Se pasará una sesión limpia tras el commit
+            conversation_history=history,
+            db_session=db_session,
             filters=query.filters
         )
         
         # ========== 4. GUARDAR RESPUESTA DEL ASISTENTE ==========
+        # Limpieza de respuesta (Sufijo de depuración restaurado a petición del usuario)
         response_text = result.get("response", "")
-        # Añadir debug de proveedor si es necesario
         provider = result.get("provider")
         if provider:
             response_text += f"\n\n---\n*LLM: {provider}*"
         elif result.get("from_cache") == "exact_or_similar":
             response_text += f"\n\n---\n*LLM: Caché Híbrida*"
+
 
         assistant_message = ChatMessage(
             role='assistant',

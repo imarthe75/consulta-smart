@@ -1,0 +1,38 @@
+🚀 Iniciando prueba de estrés y funcionalidad ConsultaRPP 2026...
+🔑 Intentando login como: demo@example.com
+✅ Autenticación exitosa.
+💬 Enviando consulta: 'Me aceptan una copia de mis papeles para pedir una constancia de libertad de gravámen?'
+DEBUG Full Response: {
+  "status": "success",
+  "data": {
+    "session_id": "56a8170e-3d14-41fe-9ac5-9ec381b6f416",
+    "response": "Error interno en el procesamiento: All LLM providers failed. Last error: 404 Not Found. {'message': '', 'status': 'Not Found'}",
+    "sources": [],
+    "has_relevant_knowledge": false,
+    "conversation_history": [
+      {
+        "role": "user",
+        "content": "Me aceptan una copia de mis papeles para pedir una constancia de libertad de grav\u00e1men?",
+        "timestamp": "2026-04-14T04:17:17.530398"
+      },
+      {
+        "role": "assistant",
+        "content": "Error interno en el procesamiento: All LLM providers failed. Last error: 404 Not Found. {'message': '', 'status': 'Not Found'}",
+        "timestamp": "2026-04-14T04:17:24.834133"
+      }
+    ],
+    "cache_info": {
+      "from_cache": null,
+      "similarity_score": null,
+      "query_length": null,
+      "response_length": null
+    }
+  }
+}
+
+🤖 RESPUESTA DEL ASISTENTE EXPERTO:
+--------------------------------------------------
+Sin respuesta
+--------------------------------------------------
+
+✅ Prueba finalizada con éxito. Proveedor utilizado: N/A

@@ -3,14 +3,12 @@ Smart LLM Router - Multi-provider com fallback automático
 Similar a idp-smart, pero con APIs gratuitas
 """
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from enum import Enum
 import logging
 from datetime import datetime, timedelta
 from app.core.config import settings
-from app.infrastructure.external.llm_service import (
-    GroqProvider, GeminiProvider
-)
+from app.infrastructure.external.llm_service import GroqProvider, GeminiProvider
 from app.infrastructure.external.local_embedding_service import LocalEmbeddingService
 
 logger = logging.getLogger(__name__)
@@ -37,7 +35,6 @@ class SmartLLMRouter:
             "vertex": None,
             "groq": None,
             "gemini": None,
-            "ollama": None,
         }
         
         self.embeddings_service = LocalEmbeddingService()
@@ -65,17 +62,16 @@ class SmartLLMRouter:
                 "success_count": 0,
                 "rate_limit_until": None,
             },
-            "ollama": {
-                "status": ProviderStatus.AVAILABLE,
-                "last_error": None,
-                "error_count": 0,
-                "success_count": 0,
-                "rate_limit_until": None,
-            },
         }
         
-        # Preferencias de routing: Vertex (si está disponible) > Groq > Gemini
-        self.priority_order: List[str] = ["vertex", "groq", "gemini"]
+        # Preferencias de routing: Prioridad dinámica según .env
+        preferred = settings.LLM_PROVIDER.lower() if hasattr(settings, 'LLM_PROVIDER') else "vertex"
+        if preferred not in self.providers:
+            logger.warning(f"⚠️ LLM_PROVIDER '{preferred}' no soportado. Se usará 'groq' como valor por defecto.")
+            preferred = "groq" if "groq" in self.providers else next(iter(self.providers))
+        others = [name for name in self.providers.keys() if name != preferred]
+        self.priority_order: List[str] = [preferred] + others
+        logger.info(f"🚦 SmartRouter: Prioridad establecida en {self.priority_order}")
         
         self._initialize_providers()
     
@@ -108,38 +104,39 @@ class SmartLLMRouter:
                 self.providers["gemini"] = GeminiProvider()
                 logger.info("✅ Gemini provider initialized")
             else:
-                self.provider_status["gemini"]["status"] = ProviderStatus.UNAVAILABLE
                 logger.warning("⚠️ Gemini disabled (no API key)")
+                self.provider_status["gemini"]["status"] = ProviderStatus.UNAVAILABLE
         except Exception as e:
             logger.error(f"❌ Critical error initializing providers: {e}")
     
     def _get_best_provider(self) -> Optional[str]:
         """Selecciona el mejor proveedor disponible basado en estado"""
         available = []
-        
+        logger.info(f"🔍 Evaluando proveedores. Orden de prioridad: {self.priority_order}")
         for provider_name in self.priority_order:
             status = self.provider_status[provider_name]["status"]
+            has_client = self.providers.get(provider_name) is not None
             
-            # Skip si no está disponible
-            if status == ProviderStatus.UNAVAILABLE:
+            # Skip si no está disponible o no tiene cliente
+            if status == ProviderStatus.UNAVAILABLE or not has_client:
                 continue
             
             # Check si está en rate limit
             if status == ProviderStatus.RATE_LIMITED:
                 rate_limit_until = self.provider_status[provider_name]["rate_limit_until"]
                 if rate_limit_until and datetime.now() < rate_limit_until:
-                    continue  # Aún en rate limit
+                    logger.warning(f"  - {provider_name} está en Rate Limit")
+                    continue
                 else:
-                    # Rate limit expiró, intentar de nuevo
                     self.provider_status[provider_name]["status"] = ProviderStatus.AVAILABLE
             
             available.append(provider_name)
         
         if available:
-            logger.info(f"🎯 Selected provider: {available[0]}")
+            logger.info(f"🎯 Ganador definitivo: {available[0]}")
             return available[0]
         else:
-            logger.warning("❌ No providers available!")
+            logger.error("❌ ERROR CRÍTICO: Ningún proveedor de IA está disponible.")
             return None
     
     async def chat(
@@ -149,7 +146,7 @@ class SmartLLMRouter:
         max_tokens: int = 1024,
         system: Optional[str] = None,
         **kwargs
-    ) -> str:
+    ) -> Tuple[str, str]:
         """
         Chat con fallback automático entre proveedores
         """
@@ -175,6 +172,7 @@ class SmartLLMRouter:
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    system=system,
                     **kwargs
                 )
                 
@@ -187,11 +185,18 @@ class SmartLLMRouter:
                 return response, provider_name
                 
             except Exception as e:
+                logger.error(f"❌ {provider_name} ERROR: {e}")
                 error_str = str(e).lower()
                 
+                # Detectar autenticación fallida (401) o permisos
+                if "401" in error_str or "unauthorized" in error_str or "api key" in error_str:
+                    self.provider_status[provider_name]["status"] = ProviderStatus.UNAVAILABLE
+                    logger.error(f"❌ Provider {provider_name} AUTH FAILURE. Disabling for session.")
+                
                 # Detectar rate limit
-                if "rate limit" in error_str or "quota" in error_str or "429" in error_str:
+                elif "rate limit" in error_str or "quota" in error_str or "429" in error_str:
                     self.provider_status[provider_name]["status"] = ProviderStatus.RATE_LIMITED
+                    self.provider_status[provider_name]["rate_limit_until"] = datetime.now() + timedelta(minutes=1)
                     self.provider_status[provider_name]["rate_limit_until"] = datetime.now() + timedelta(minutes=1)
                     logger.warning(f"⏱️ {provider_name} rate limited, waiting 1 minute")
                 
@@ -203,7 +208,7 @@ class SmartLLMRouter:
                     logger.error(f"❌ {provider_name} CRITICAL ERROR: {e}")
                     # Log detallado para diagnosis de Vertex
                     if provider_name == "vertex":
-                        logger.error(f"🔍 DETALLE FALLO VERTEX (Proyecto {settings.GCP_PROJECT_ID}): {str(e)}")
+                        logger.exception(f"🔴 ERROR CRITICO VERTEX (Proyecto {settings.GCP_PROJECT_ID}): {str(e)}")
                 
                 self.provider_status[provider_name]["last_error"] = str(e)
                 

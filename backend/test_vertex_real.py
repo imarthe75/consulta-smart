@@ -11,18 +11,22 @@ def test_vertex_models():
         credentials = service_account.Credentials.from_service_account_file(settings.GCP_CREDENTIALS_JSON)
         print(f"Credentials loaded from {settings.GCP_CREDENTIALS_JSON}")
     
-    vertexai.init(project=settings.GCP_PROJECT_ID, location=settings.GCP_LOCATION, credentials=credentials)
-    models = ["gemini-1.5-flash-002", "gemini-1.5-flash", "gemini-1.5-pro-002", "gemini-1.5-pro"]
-    for name in models:
-        print(f"\n--- Testing Vertex Model: {name} ---")
-        try:
-            model = GenerativeModel(name)
-            response = model.generate_content("Hola")
-            print(f"Success with {name}: {response.text}")
-            return name
-        except Exception as e:
-            print(f"Failed {name}: {e}")
-    return None
+    locations = ["us-central1", "us-east1", "southamerica-east1"]
+    models = ["gemini-1.5-flash", "gemini-1.5-flash-001", "gemini-1.5-flash-002", "gemini-1.0-pro"]
+    
+    for loc in locations:
+        print(f"\n>>>> Testing Location: {loc} <<<<")
+        vertexai.init(project=settings.GCP_PROJECT_ID, location=loc, credentials=credentials)
+        for name in models:
+            print(f"--- Testing Model: {name} in {loc} ---")
+            try:
+                model = GenerativeModel(name)
+                response = model.generate_content("Hola")
+                print(f"✅ SUCCESS with {name} in {loc}: {response.text}")
+                return name, loc
+            except Exception as e:
+                print(f"❌ Failed {name} in {loc}: {e}")
+    return None, None
 
 if __name__ == "__main__":
     test_vertex_models()

@@ -64,6 +64,9 @@ export const authAPI = {
 
     getProfile: () =>
         api.get('/auth/profile'),
+
+    guestLogin: () =>
+        api.post('/auth/guest'),
 }
 
 export const documentsAPI = {

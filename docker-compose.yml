@@ -1,141 +1,63 @@
-#version: '3.9'
+version: '3.9'
 
 services:
-  # PostgreSQL 18 con soporte para UUIDs v7 y pgvector
-  postgres:
-    build:
-      context: ./db
-      dockerfile: Dockerfile
-    container_name: consultarpp-postgres
-    environment:
-      POSTGRES_USER: ${DB_USER:-consultarpp_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
-      POSTGRES_DB: ${DB_NAME:-consultarpp_db}
-      PGDATA: /var/lib/postgresql/data
-    volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-      - ./db/init-db.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "3002:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-consultarpp_user} -d ${DB_NAME:-consultarpp_db}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - consultarpp-network
-    restart: on-failure
-
-  # Redis para caché y Celery
-  redis:
-    image: redis:7-alpine
-    container_name: consultarpp-redis
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_secure_2026}
-    volumes:
-      - ./data/redis:/data
-    ports:
-      - "3003:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_secure_2026}", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - consultarpp-network
-    restart: on-failure
-
-  # SeaweedFS Master
-  seaweedfs:
-    image: chrislusf/seaweedfs:latest
-    container_name: consultarpp-seaweedfs
-    command: "server -dir=/data -s3 -master.volumeSizeLimitMB=1024 -ip=seaweedfs"
-    volumes:
-      - ./data/seaweed:/data
-    ports:
-      - "3004:9333" # Master
-      - "3005:8080" # Volume
-      - "3006:8333" # S3
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9333/dir/status"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - consultarpp-network
-    restart: on-failure
+  # El proyecto ahora utiliza los servicios centrales del ecosistema Casmarts
+  # (Postgres, Valkey, SeaweedFS) a través de la red 'aura-network'.
 
   # FastAPI Backend
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: consultarpp-backend
+    container_name: consulta-smart-backend
+    env_file:
+      - ./backend/.env
     command: "uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     environment:
       - APP_ENV=${APP_ENV:-development}
       - APP_DEBUG=${APP_DEBUG:-true}
-      - DB_HOST=postgres
+      - DB_HOST=casmarts-core-db
       - DB_PORT=5432
       - DB_USER=${DB_USER:-consultarpp_user}
       - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
       - DB_NAME=${DB_NAME:-consultarpp_db}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secure_2026}@redis:6379/0
-      - CELERY_BROKER=redis://:${REDIS_PASSWORD:-redis_secure_2026}@redis:6379/1
-      - CELERY_BACKEND=redis://:${REDIS_PASSWORD:-redis_secure_2026}@redis:6379/2
-      - SEAWEEDFS_MASTER_URL=http://seaweedfs:9333
-      - SEAWEEDFS_VOLUME_URL=http://seaweedfs:8080
-      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
-      - GCP_LOCATION=${GCP_LOCATION}
-      - GCP_CREDENTIALS_JSON=${GCP_CREDENTIALS_JSON}
-      - GOOGLE_APPLICATION_CREDENTIALS=${GCP_CREDENTIALS_JSON}
-      - VERTEX_MODEL=${VERTEX_MODEL}
-      - GEMINI_MODEL=${GEMINI_MODEL}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - ALIBABA_API_KEY=${ALIBABA_API_KEY:-}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/0
+      - CELERY_BROKER=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/1
+      - CELERY_BACKEND=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/2
+      - SEAWEEDFS_MASTER_URL=http://casmarts-core-storage:9333
+      - SEAWEEDFS_VOLUME_URL=http://casmarts-core-storage:8080
       - TEMPERATURE=${TEMPERATURE:-0.7}
       - MAX_TOKENS=${MAX_TOKENS:-2048}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - SECRET_KEY=${SECRET_KEY:-your-super-secret-key-change-in-production}
     ports:
       - "3001:8000"
     volumes:
       - ./backend:/app
       - ./docs:/app/docs
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
     networks:
-      - consultarpp-network
+      - aura-network
+      - consulta-smart-network
 
   # Celery Worker
   celery-worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: consultarpp-celery-worker
+    container_name: consulta-smart-celery-worker
     command: "celery -A app.workers.celery_app worker --loglevel=info --concurrency=4"
     environment:
       - APP_ENV=${APP_ENV:-development}
-      - DB_HOST=postgres
+      - DB_HOST=casmarts-core-db
       - DB_PORT=5432
       - DB_USER=${DB_USER:-consultarpp_user}
       - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
       - DB_NAME=${DB_NAME:-consultarpp_db}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secure_2026}@redis:6379/0
-      - CELERY_BROKER=redis://:${REDIS_PASSWORD:-redis_secure_2026}@redis:6379/1
-      - CELERY_BACKEND=redis://:${REDIS_PASSWORD:-redis_secure_2026}@redis:6379/2
-      - SEAWEEDFS_MASTER_URL=http://seaweedfs:9333
-      - SEAWEEDFS_VOLUME_URL=http://seaweedfs:8080
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/0
+      - CELERY_BROKER=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/1
+      - CELERY_BACKEND=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/2
+      - SEAWEEDFS_MASTER_URL=http://casmarts-core-storage:9333
+      - SEAWEEDFS_VOLUME_URL=http://casmarts-core-storage:8080
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
@@ -145,15 +67,9 @@ services:
       - MAX_TOKENS=${MAX_TOKENS:-2048}
     volumes:
       - ./backend:/app
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
     networks:
-      - consultarpp-network
+      - aura-network
+      - consulta-smart-network
     restart: on-failure
 
   # Celery Beat
@@ -161,25 +77,23 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: consultarpp-celery-beat
+    container_name: consulta-smart-celery-beat
     command: "celery -A app.workers.celery_app beat --loglevel=info"
     environment:
       - APP_ENV=${APP_ENV:-development}
-      - DB_HOST=postgres
+      - DB_HOST=casmarts-core-db
       - DB_PORT=5432
       - DB_USER=${DB_USER:-consultarpp_user}
       - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
       - DB_NAME=${DB_NAME:-consultarpp_db}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secure_2026}@redis:6379/0
-      - CELERY_BROKER=redis://:${REDIS_PASSWORD:-redis_secure_2026}@redis:6379/1
-      - CELERY_BACKEND=redis://:${REDIS_PASSWORD:-redis_secure_2026}@redis:6379/2
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/0
+      - CELERY_BROKER=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/1
+      - CELERY_BACKEND=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/2
     volumes:
       - ./backend:/app
-    depends_on:
-      redis:
-        condition: service_healthy
     networks:
-      - consultarpp-network
+      - aura-network
+      - consulta-smart-network
     restart: on-failure
 
   # Frontend (React 19)
@@ -187,9 +101,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: consultarpp-frontend
+    container_name: consulta-smart-frontend
     environment:
-      - VITE_API_URL=/api/v1
+      - VITE_API_URL=/consultarpp/api/v1
       - VITE_APP_NAME=ConsultaRPP
     ports:
       - "3000:5173"
@@ -199,11 +113,14 @@ services:
     depends_on:
       - backend
     networks:
-      - consultarpp-network
+      - aura-network
+      - consulta-smart-network
 
 networks:
-  consultarpp-network:
+  consulta-smart-network:
     driver: bridge
+  aura-network:
+    external: true
 
 volumes:
   frontend-node-modules:

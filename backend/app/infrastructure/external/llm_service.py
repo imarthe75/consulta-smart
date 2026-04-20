@@ -1,14 +1,30 @@
-# LLM Service - Multi-provider support (Groq, Gemini, OpenAI, Claude)
+# LLM Service - Multi-provider support (Groq, Gemini, Vertex AI)
 
 from typing import Optional, List
 from abc import ABC, abstractmethod
 import json
 import logging
+import asyncio
 
 from app.core.config import settings
+from app.core.logger import logger
+from app.infrastructure.external.local_embedding_service import LocalEmbeddingService
 
-logger = logging.getLogger(__name__)
+try:
+    from google import genai
+    HAS_GENAI = True
+except ImportError:
+    HAS_GENAI = False
+    logger.error("❌ google-genai library NOT FOUND at runtime!")
 
+# Singleton for local embeddings
+_local_embedding_service = None
+
+def get_local_embedding_service():
+    global _local_embedding_service
+    if _local_embedding_service is None:
+        _local_embedding_service = LocalEmbeddingService()
+    return _local_embedding_service
 
 class LLMProvider(ABC):
     """Abstract base for LLM providers"""
@@ -31,38 +47,14 @@ class LLMProvider(ABC):
 
 
 class GroqProvider(LLMProvider):
-    """Groq LLM provider"""
+    """Groq LLM provider (Fast fallback)"""
     
     def __init__(self, api_key: str = settings.GROQ_API_KEY):
-        from groq import Groq as GroqClient
-        self.client = GroqClient(api_key=api_key)
+        from groq import AsyncGroq
+        self.client = AsyncGroq(api_key=api_key)
         self.chat_model = settings.GROQ_MODEL
-        # Usar OpenRouter para embeddings (compatible con OpenAI SDK)
-        logger.info(f"DEBUG: OPENAI_API_KEY={bool(settings.OPENAI_API_KEY)}, OPENAI_BASE_URL={settings.OPENAI_BASE_URL}")
-        if settings.OPENAI_API_KEY and settings.OPENAI_BASE_URL:
-            self.embedding_model = "openai/text-embedding-3-small"
-            import openai
-            logger.info(f"DEBUG: Initializing OpenAI client with base_url={settings.OPENAI_BASE_URL}")
-            self.openai_client = openai.OpenAI(
-                api_key=settings.OPENAI_API_KEY,
-                base_url=settings.OPENAI_BASE_URL
-            )
-            self.use_openai_embeddings = True
-            logger.info(f"✅ GroqProvider initialized with OpenRouter embeddings")
-        elif settings.OPENAI_API_KEY:
-            # Fallback a OpenAI directo si no hay OPENAI_BASE_URL
-            self.embedding_model = "text-embedding-3-small"
-            import openai
-            self.openai_client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-            self.use_openai_embeddings = True
-            logger.info(f"⚠️ GroqProvider initialized with OpenAI embeddings (no base_url)")
-        else:
-            # Fallback: usar un modelo local o placeholder
-            self.embedding_model = "placeholder"
-            self.openai_client = None
-            self.use_openai_embeddings = False
-            logger.warning("❌ GroqProvider: No embedding API configured, using placeholder")
-    
+        logger.info(f"✅ GroqProvider initialized (Modern Async)")
+
     async def chat(
         self,
         messages: List[dict],
@@ -70,56 +62,36 @@ class GroqProvider(LLMProvider):
         max_tokens: int = 1024,
         **kwargs
     ) -> str:
-        """Chat with Groq with automatic model fallback for 429 errors"""
-        models_to_try = [self.chat_model, "llama-3.1-8b-instant", "llama3-8b-8192"]
-        last_exception = None
-        
-        for model in models_to_try:
-            try:
-                logger.info(f"📤 Calling Groq with model {model}")
-                response = self.client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    top_p=settings.TOP_P
-                )
-                return response.choices[0].message.content
-            except Exception as e:
-                last_exception = e
-                error_str = str(e).lower()
-                if "rate limit" in error_str or "429" in error_str:
-                    logger.warning(f"⚠️ Groq model {model} rate limited, trying next model...")
-                    continue
-                else:
-                    break
-        
-        logger.error(f"Error calling Groq chat: {last_exception}")
-        raise last_exception
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"❌ Error in Groq: {e}")
+            raise
 
     async def embed(self, text: str) -> List[float]:
-        """Generate embedding LOCALLY using Sentence Transformers (384-dim, free)"""
-        try:
-            from sentence_transformers import SentenceTransformer
-            
-            # Use same model as document embeddings for consistency
-            model = SentenceTransformer('all-MiniLM-L6-v2')
-            embedding = model.encode(text, convert_to_tensor=False)
-            
-            logger.info(f"✅ Embedding generated locally: {len(embedding)} dimensions (Sentence Transformers)")
-            return embedding.tolist()
-        except Exception as e:
-            logger.error(f"❌ Error generating embedding: {e}")
-            raise
+        service = get_local_embedding_service()
+        return await service.embed(text)
 
 
 class GeminiProvider(LLMProvider):
-    """Google Gemini provider"""
+    """Google Gemini provider (Modern Unified SDK)"""
     
     def __init__(self, api_key: str = settings.GOOGLE_API_KEY):
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(settings.GEMINI_MODEL)
+        if not HAS_GENAI:
+            raise ImportError("Google GenAI SDK is missing or could not be loaded")
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY must be provided")
+            
+        # Initialize the modern Unified Client
+        self.client = genai.Client(api_key=api_key)
+        self.model_name = settings.GEMINI_MODEL
+        logger.info(f"✅ GeminiProvider initialized (Unified SDK): {self.model_name}")
     
     async def chat(
         self,
@@ -128,160 +100,81 @@ class GeminiProvider(LLMProvider):
         max_tokens: int = 1024,
         **kwargs
     ) -> str:
-        """Chat with Gemini using native system instructions"""
-        try:
-            # Get system prompt if provided
-            system_prompt = kwargs.get('system', '')
-            
-            # Use specific model with system prompt if provided
-            model = self.model
-            if system_prompt:
-                import google.generativeai as genai
-                model = genai.GenerativeModel(
-                    model_name=settings.GEMINI_MODEL,
-                    system_instruction=system_prompt
+        import asyncio
+        import random
+        from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+        
+        # Prepare contents
+        contents = []
+        for msg in messages:
+            contents.append({
+                "role": "user" if msg["role"] == "user" else "model",
+                "parts": [{"text": msg["content"]}]
+            })
+        
+        system_instruction = kwargs.get("system", None)
+
+        @retry(
+            stop=stop_after_attempt(5),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+            retry=retry_if_exception_type(Exception), # We will filter inside or outside
+            before_sleep=lambda retry_state: logger.warning(f"⚠️ Gemini saturated. Retrying ({retry_state.attempt_number}/5)...")
+        )
+        def _sync_chat_with_retry():
+            try:
+                return self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config={
+                        "temperature": temperature,
+                        "max_output_tokens": max_tokens,
+                        "system_instruction": system_instruction
+                    }
                 )
-            
-            # Convert OpenAI format to Gemini format
-            contents = []
-            for msg in messages:
-                contents.append({
-                    "role": "user" if msg["role"] == "user" else "model",
-                    "parts": [msg["content"]]
-                })
-            
-            response = await model.generate_content_async(
-                contents,
-                generation_config={
-                    "temperature": temperature,
-                    "max_output_tokens": max_tokens
-                }
-            )
-            
-            return response.text
-        except Exception as e:
-            logger.error(f"Error calling Gemini chat: {e}")
-            raise
-    
-    async def embed(self, text: str) -> List[float]:
-        """Generate embedding LOCALLY (same as Groq, for consistency)"""
+            except Exception as e:
+                err_text = str(e).lower()
+                if "503" in err_text or "429" in err_text or "resource_exhausted" in err_text or "unavailable" in err_text:
+                    raise # Trigger tenacity retry
+                raise e # Fatal error, don't retry
+
         try:
-            from sentence_transformers import SentenceTransformer
-            
-            model = SentenceTransformer('all-MiniLM-L6-v2')
-            embedding = model.encode(text, convert_to_tensor=False)
-            
-            logger.info(f"✅ Embedding generated locally: {len(embedding)} dimensions")
-            return embedding.tolist()
+            response = await asyncio.wait_for(
+                asyncio.to_thread(_sync_chat_with_retry),
+                timeout=30.0
+            )
+            return response.text
+        except asyncio.TimeoutError:
+            logger.error(f"⏱️ Gemini API TIMEOUT (30s)")
+            raise Exception("Timeout in Gemini API")
         except Exception as e:
-            logger.error(f"❌ Error generating embedding: {e}")
+            logger.error(f"❌ Gemini API Final Failure after retries: {e}")
             raise
+
+    async def embed(self, text: str) -> List[float]:
+        service = get_local_embedding_service()
+        return await service.embed(text)
 
 
 class VertexAIProvider(LLMProvider):
-    """Google Cloud Vertex AI provider"""
+    """Vertex AI Provider (Enterprise Fallback using Unified SDK)"""
     
-    def __init__(
-        self, 
-        project_id: str = settings.GCP_PROJECT_ID,
-        location: str = settings.GCP_LOCATION
-    ):
-        import vertexai
-        import os
-        from vertexai.generative_models import GenerativeModel
-        
-        # Usar credenciales explícitas si están configuradas
-        if settings.GCP_CREDENTIALS_JSON and os.path.exists(settings.GCP_CREDENTIALS_JSON):
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.GCP_CREDENTIALS_JSON
-            logger.info(f"🔑 Using Vertex AI credentials from: {settings.GCP_CREDENTIALS_JSON}")
-        
-        vertexai.init(project=project_id, location=location)
-        self.model = GenerativeModel(settings.VERTEX_MODEL)
-    
-    async def chat(
-        self,
-        messages: List[dict],
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
-        **kwargs
-    ) -> str:
-        """Chat with Vertex AI using native system instructions"""
+    def __init__(self, project_id: Optional[str] = None, location: Optional[str] = None):
+        project_id = project_id or settings.GCP_PROJECT_ID
+        location = location or settings.GCP_LOCATION
+        if not project_id:
+            raise ValueError("GCP_PROJECT_ID must be configured for Vertex AI")
+
         try:
-            # Get system prompt if provided
-            system_prompt = kwargs.get('system', '')
-            
-            # Use specific model with system prompt if provided
-            model = self.model
-            if system_prompt:
-                from vertexai.generative_models import GenerativeModel
-                model = GenerativeModel(
-                    model_name=settings.VERTEX_MODEL,
-                    system_instruction=system_prompt
-                )
-            
-            # Convert OpenAI format to Vertex format
-            # Note: Vertex AI expect Content objects or similar
-            from vertexai.generative_models import Content, Part
-            
-            contents = []
-            for msg in messages:
-                contents.append(Content(
-                    role="user" if msg["role"] == "user" else "model",
-                    parts=[Part.from_text(msg["content"])]
-                ))
-            
-            response = await model.generate_content_async(
-                contents,
-                generation_config={
-                    "temperature": temperature,
-                    "max_output_tokens": max_tokens
-                }
-            )
-            
-            return response.text
+            from google import genai
+            # Use Unified Client for Vertex too
+            self.client = genai.Client(vertexai=True, project=project_id, location=location)
+            self.model_name = settings.VERTEX_MODEL or settings.GEMINI_MODEL
+            logger.info(f"✅ Vertex AI initialized via Unified SDK: {self.model_name}")
         except Exception as e:
-            logger.error(f"Error calling Vertex AI chat: {e}")
-            raise
+            logger.warning(f"⚠️ Vertex AI initialization failed: {e}")
+            self.client = None
+            self.model_name = settings.VERTEX_MODEL or settings.GEMINI_MODEL
 
-    async def embed(self, text: str) -> List[float]:
-        """Generate embedding LOCALLY (consistency)"""
-        try:
-            from sentence_transformers import SentenceTransformer
-            model = SentenceTransformer('all-MiniLM-L6-v2')
-            embedding = model.encode(text, convert_to_tensor=False)
-            return embedding.tolist()
-        except Exception as e:
-            logger.error(f"❌ Error generating embedding: {e}")
-            raise
-
-
-class LLMService:
-    """LLM Service - Factory for providers"""
-    
-    _instance = None
-    
-    @classmethod
-    def get_instance(cls):
-        """Get singleton instance"""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-    
-    def __init__(self, provider: str = settings.LLM_PROVIDER):
-        self.provider_name = provider
-        
-        if provider == "groq":
-            self.provider = GroqProvider()
-        elif provider == "gemini":
-            self.provider = GeminiProvider()
-        elif provider == "vertex":
-            self.provider = VertexAIProvider()
-        # Add more providers as needed
-        else:
-            raise ValueError(f"Unknown LLM provider: {provider}")
-        
-        logger.info(f"LLM Service initialized with provider: {provider}")
-    
     async def chat(
         self,
         messages: List[dict],
@@ -289,19 +182,73 @@ class LLMService:
         max_tokens: int = 1024,
         **kwargs
     ) -> str:
-        """Send chat request"""
-        return await self.provider.chat(
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **kwargs
-        )
-    
+        if not self.client:
+            raise Exception("Vertex AI not available")
+            
+        # Prepare contents (Conversational History)
+        contents = []
+        for msg in messages:
+            contents.append({
+                "role": "user" if msg["role"] == "user" else "model",
+                "parts": [{"text": msg["content"]}]
+            })
+        
+        system_instruction = kwargs.get("system", None)
+
+        try:
+            # Use Async Unified Client for Vertex with explicit timeout
+            # and safety settings to avoid blocked responses causing delays
+            response = await asyncio.wait_for(
+                self.client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config={
+                        "temperature": temperature,
+                        "max_output_tokens": max_tokens,
+                        "system_instruction": system_instruction
+                    }
+                ),
+                timeout=30.0 # Timeout de 30 segundos para evitar colapsos
+            )
+            return response.text
+        except asyncio.TimeoutError:
+            logger.error(f"⏱️ Vertex AI TIMEOUT (30s) for model {self.model_name}")
+            raise Exception("Timeout in Vertex AI")
+        except Exception as e:
+            logger.error(f"❌ Vertex AI API Failure: {e}")
+            raise
+
     async def embed(self, text: str) -> List[float]:
-        """Generate embedding"""
-        return await self.provider.embed(text)
+        service = get_local_embedding_service()
+        return await service.embed(text)
 
 
-def get_llm_provider() -> LLMService:
-    """Factory function to get singleton LLM service instance"""
-    return LLMService.get_instance()
+class LLMService:
+    """Main LLM service orchestrator"""
+    
+    def __init__(self):
+        from app.infrastructure.external.smart_llm_router import SmartLLMRouter
+        self.router = SmartLLMRouter()
+        logger.info("✅ LLMService (Orchestrator) initialized")
+
+    async def chat(self, messages: List[dict], **kwargs) -> str:
+        """Delegate chat to router"""
+        return await self.router.chat(messages, **kwargs)
+
+    async def embed(self, text: str) -> List[float]:
+        """Delegate embedding to router or local service"""
+        service = get_local_embedding_service()
+        return await service.embed(text)
+
+def get_llm_provider(name: str = "gemini") -> LLMProvider:
+    """Factory for LLM providers"""
+    if name == "groq":
+        return GroqProvider()
+    elif name == "vertex":
+        return VertexAIProvider()
+    else:
+        return GeminiProvider()
+
+def get_llm_service() -> LLMService:
+    """Singleton for LLMService"""
+    return LLMService()

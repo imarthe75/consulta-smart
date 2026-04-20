@@ -1,7 +1,7 @@
 # Modelos ORM de Base de Datos (SQLAlchemy)
 
 from sqlalchemy import Column, String, Integer, DateTime, Boolean, Text, JSON, Enum, ForeignKey, Index, Computed
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 from datetime import datetime
 from uuid6 import uuid7
 from pgvector.sqlalchemy import Vector
@@ -43,7 +43,9 @@ class DocumentModel(Base):
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     file_type = Column(String(20), nullable=False)
     seaweedfs_file_id = Column(String(255), nullable=True, unique=True)
+    file_path = Column(String(255), nullable=True)
     status = Column(String(20), default="pending", nullable=False, index=True)
+    processing_status = synonym("status")
     chunk_count = Column(Integer, default=0)
     token_count = Column(Integer, default=0)
     group_id = Column(String(36), nullable=True, index=True)
@@ -77,7 +79,10 @@ class DocumentChunkModel(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid7()))
     document_id = Column(String(36), ForeignKey("documents.id"), nullable=False, index=True)
     chunk_number = Column(Integer, nullable=False)
+    chunk_index = synonym("chunk_number")
     text = Column(Text, nullable=False)
+    content = synonym("text")
+    token_count = Column(Integer, default=0)
     embedding = Column(Vector(384), nullable=True) # SentenceTransformer all-MiniLM-L6-v2 (384 dimensions)
     doc_metadata = Column(JSON, default={})
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -89,6 +94,22 @@ class DocumentChunkModel(Base):
         Index('idx_chunk_document_id', 'document_id'),
     )
 
+
+class VectorEmbeddingModel(Base):
+    """ORM Model para embeddings vectoriales"""
+    __tablename__ = "vector_embeddings"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid7()))
+    chunk_id = Column(String(36), ForeignKey("document_chunks.id"), nullable=False, index=True)
+    vector = Column(JSON, nullable=False)
+    embedding_model = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    chunk = relationship("DocumentChunkModel", lazy="select")
+
+    __table_args__ = (
+        Index('idx_vector_embedding_chunk_id', 'chunk_id'),
+    )
 
 class ChatSessionModel(Base):
     """ORM Model para Chat Session"""
@@ -129,3 +150,21 @@ class ChatMessageModel(Base):
     __table_args__ = (
         Index('idx_message_session_id', 'session_id'),
     )
+
+
+User = UserModel
+Document = DocumentModel
+DocumentChunk = DocumentChunkModel
+ChatSession = ChatSessionModel
+ChatMessage = ChatMessageModel
+
+__all__ = ["User","Document","DocumentChunk","ChatSession","ChatMessage","UserModel","DocumentModel","DocumentChunkModel","ChatSessionModel","ChatMessageModel"]
+
+User = UserModel
+Document = DocumentModel
+DocumentChunk = DocumentChunkModel
+VectorEmbedding = VectorEmbeddingModel
+ChatSession = ChatSessionModel
+ChatMessage = ChatMessageModel
+
+__all__ = ["User","Document","DocumentChunk","VectorEmbedding","ChatSession","ChatMessage","UserModel","DocumentModel","DocumentChunkModel","VectorEmbeddingModel","ChatSessionModel","ChatMessageModel"]

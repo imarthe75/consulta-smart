@@ -1,14 +1,15 @@
 """
 Servicio LocalEmbedding: Genera embeddings con Sentence Transformers
 Usado cuando LLM API no está disponible o sin créditos
+Optimizado con carga diferida (Lazy Loading) para evitar bloqueos en el arranque
 """
 
 from typing import List, Optional
 import logging
-from sentence_transformers import SentenceTransformer
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
-
 
 class LocalEmbeddingService:
     """Genera embeddings locales sin APIs usando sentence-transformers"""
@@ -17,72 +18,67 @@ class LocalEmbeddingService:
     DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
     
     def __init__(self, model_name: str = DEFAULT_MODEL):
-        """Inicializa con modelo"""
-        try:
-            logger.info(f"Cargando modelo de embeddings: {model_name}")
-            self.model = SentenceTransformer(model_name)
-            self.dimension = self.model.get_sentence_embedding_dimension()
-            logger.info(f"✓ Modelo listo. Dimensiones: {self.dimension}")
-        except Exception as e:
-            logger.error(f"❌ Error cargando modelo: {e}")
-            raise
-    
+        """Inicialización ligera: no carga el modelo todavía"""
+        self.model_name = model_name
+        self._model = None
+        self._dimension = None
+        self._lock = asyncio.Lock()
+        logger.info(f"⏳ LocalEmbeddingService preparado para carga diferida: {model_name}")
+
+    async def _get_model(self):
+        """Carga el modelo solo cuando es necesario (Thread-safe)"""
+        async with self._lock:
+            if self._model is None:
+                from sentence_transformers import SentenceTransformer
+                logger.info(f"🚀 Cargando modelo de embeddings en segundo plano: {self.model_name}...")
+                
+                # Ejecutar en hilo separado para no bloquear el loop de eventos
+                loop = asyncio.get_running_loop()
+                self._model = await loop.run_in_executor(
+                    None, 
+                    lambda: SentenceTransformer(self.model_name)
+                )
+                self._dimension = self._model.get_sentence_embedding_dimension()
+                logger.info(f"✅ Modelo de embeddings listo (Dim: {self._dimension})")
+        return self._model
+
     async def embed(self, text: str) -> List[float]:
-        """
-        Genera embedding para un texto
-        Retorna: Lista de floats (384 dimensiones)
-        """
+        """Genera embedding para un texto"""
         if not text or not isinstance(text, str):
             raise ValueError("Texto inválido")
         
         try:
-            # Generar embedding
-            embedding = self.model.encode(text.strip(), convert_to_tensor=False)
+            model = await self._get_model()
+            # Delegar cálculo pesado a un hilo separado
+            loop = asyncio.get_running_loop()
+            embedding = await loop.run_in_executor(
+                None,
+                lambda: model.encode(text.strip(), convert_to_tensor=False)
+            )
             
-            # Convertir a lista
-            return embedding.tolist()
+            if hasattr(embedding, 'tolist'):
+                return embedding.tolist()
+            return list(embedding)
         
         except Exception as e:
-            logger.error(f"Error generando embedding: {e}")
+            logger.error(f"❌ Error generando embedding: {e}")
             raise
     
     async def embed_batch(self, texts: List[str], batch_size: int = 32) -> List[List[float]]:
-        """
-        Genera embeddings para múltiples textos
-        Retorna: Lista de embeddings
-        """
+        """Genera embeddings para múltiples textos"""
         if not texts:
             return []
         
         try:
-            # Generar embeddings en batch
-            embeddings = self.model.encode(
-                texts,
-                batch_size=batch_size,
-                show_progress_bar=False,
-                convert_to_tensor=False
+            model = await self._get_model()
+            loop = asyncio.get_running_loop()
+            embeddings = await loop.run_in_executor(
+                None,
+                lambda: model.encode(texts, batch_size=batch_size, show_progress_bar=False, convert_to_tensor=False)
             )
             
-            # Convertir a lista de listas
-            return [emb.tolist() for emb in embeddings]
+            return [emb.tolist() if hasattr(emb, 'tolist') else list(emb) for emb in embeddings]
         
         except Exception as e:
-            logger.error(f"Error generando embeddings en batch: {e}")
-            raise
-    
-    async def similarity(self, text1: str, text2: str) -> float:
-        """
-        Calcula similitud entre dos textos (0-1)
-        """
-        try:
-            from sentence_transformers.util import pytorch_cos_sim
-            
-            emb1 = self.model.encode(text1, convert_to_tensor=True)
-            emb2 = self.model.encode(text2, convert_to_tensor=True)
-            
-            similarity = pytorch_cos_sim(emb1, emb2)[0][0].item()
-            return float(similarity)
-        
-        except Exception as e:
-            logger.error(f"Error calculando similitud: {e}")
+            logger.error(f"❌ Error generando embeddings en batch: {e}")
             raise
