@@ -340,11 +340,17 @@ export default function ChatInterface({ isWidget = false }) {
             <div className="flex-1 flex flex-col bg-slate-50 relative">
                 <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scroll-smooth">
                     {!currentSessionId ? (
-                        <div className="flex flex-col items-center justify-center h-full text-gray-400 space-y-4">
-                            <div className="p-6 bg-white rounded-full shadow-inner animate-pulse">
-                                <MessageSquare size={48} className="text-blue-200" />
+                        <div className="flex flex-col items-center justify-center h-full text-gray-400 space-y-6">
+                            <div className="relative">
+                                <div className="p-8 bg-white rounded-3xl shadow-xl animate-bounce duration-[3000ms]">
+                                    <img src="/consultarpp/assets/logos/consulta-rpp-logo.svg" alt="Logo" className="w-24 h-24" />
+                                </div>
+                                <span className="absolute -top-4 -right-4 text-5xl animate-pulse">🏛️</span>
                             </div>
-                            <p className="text-lg font-medium">Inicie una sesión para asesoría registral</p>
+                            <div className="text-center">
+                                <h2 className="text-2xl font-bold text-slate-800">Bienvenido a ConsultaRPP</h2>
+                                <p className="text-slate-500">Inicie una sesión para asesoría registral inteligente</p>
+                            </div>
                         </div>
                     ) : messages.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-full text-gray-300 space-y-2">

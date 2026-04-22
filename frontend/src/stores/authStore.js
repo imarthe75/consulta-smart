@@ -1,11 +1,11 @@
 import { create } from 'zustand'
+import keycloak from '../lib/keycloak'
 
-// Inicializar de forma segura
 const getSavedToken = () => {
+    if (keycloak.token) return keycloak.token
     try {
         return typeof window !== 'undefined' ? localStorage.getItem('token') : null
     } catch (error) {
-        console.error('Error reading localStorage:', error)
         return null
     }
 }
@@ -18,13 +18,16 @@ export const useAuthStore = create((set) => ({
     token: savedToken || null,
 
     login: (user, token) => {
-        localStorage.setItem('token', token)
         set({ isAuthenticated: true, user, token })
     },
 
     logout: () => {
-        localStorage.removeItem('token')
-        set({ isAuthenticated: false, user: null, token: null })
+        if (keycloak.authenticated) {
+            keycloak.logout()
+        } else {
+            localStorage.removeItem('token')
+            set({ isAuthenticated: false, user: null, token: null })
+        }
     },
 
     setUser: (user) => set({ user }),

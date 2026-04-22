@@ -18,7 +18,7 @@ from app.infrastructure.external.llm_service import get_llm_provider
 from app.domain.entities.document import Document, DocumentCategory
 from app.workers.celery_app import process_document_task
 from app.core.logger import logger
-from app.core.auth_utils import get_current_user  # Asumiendo que existe o lo crearemos
+from app.core.keycloak_auth import get_current_user  # Asumiendo que existe o lo crearemos
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 

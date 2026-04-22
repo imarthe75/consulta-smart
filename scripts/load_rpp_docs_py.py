@@ -17,8 +17,7 @@ async def main():
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
     from sqlalchemy.orm import sessionmaker
     from app.core.config import settings
-    from app.infrastructure.models.document import Document
-    from app.infrastructure.models.document_chunk import DocumentChunk
+    from app.infrastructure.models import Document, DocumentChunk
     
     # Connect to DB
     engine = create_async_engine(settings.DATABASE_URL, echo=False)

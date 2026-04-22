@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   # El proyecto ahora utiliza los servicios centrales del ecosistema Casmarts
   # (Postgres, Valkey, SeaweedFS) a través de la red 'aura-network'.
@@ -11,19 +9,19 @@ services:
       dockerfile: Dockerfile
     container_name: consulta-smart-backend
     env_file:
-      - ./backend/.env
+      - .env
     command: "uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     environment:
       - APP_ENV=${APP_ENV:-development}
       - APP_DEBUG=${APP_DEBUG:-true}
-      - DB_HOST=casmarts-core-db
+      - DB_HOST=casmarts-core-db-primary
       - DB_PORT=5432
       - DB_USER=${DB_USER:-consultarpp_user}
       - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
       - DB_NAME=${DB_NAME:-consultarpp_db}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/0
-      - CELERY_BROKER=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/1
-      - CELERY_BACKEND=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/2
+      - REDIS_URL=redis://casmarts-core-cache:6379/0
+      - CELERY_BROKER=redis://casmarts-core-cache:6379/1
+      - CELERY_BACKEND=redis://casmarts-core-cache:6379/2
       - SEAWEEDFS_MASTER_URL=http://casmarts-core-storage:9333
       - SEAWEEDFS_VOLUME_URL=http://casmarts-core-storage:8080
       - TEMPERATURE=${TEMPERATURE:-0.7}
@@ -31,10 +29,11 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - SECRET_KEY=${SECRET_KEY:-your-super-secret-key-change-in-production}
     ports:
-      - "3001:8000"
+      - "3005:8000"
     volumes:
       - ./backend:/app
       - ./docs:/app/docs
+      - ./scripts:/app/scripts
     networks:
       - aura-network
       - consulta-smart-network
@@ -46,16 +45,18 @@ services:
       dockerfile: Dockerfile
     container_name: consulta-smart-celery-worker
     command: "celery -A app.workers.celery_app worker --loglevel=info --concurrency=4"
+    env_file:
+      - .env
     environment:
       - APP_ENV=${APP_ENV:-development}
-      - DB_HOST=casmarts-core-db
+      - DB_HOST=casmarts-core-db-primary
       - DB_PORT=5432
       - DB_USER=${DB_USER:-consultarpp_user}
       - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
       - DB_NAME=${DB_NAME:-consultarpp_db}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/0
-      - CELERY_BROKER=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/1
-      - CELERY_BACKEND=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/2
+      - REDIS_URL=redis://casmarts-core-cache:6379/0
+      - CELERY_BROKER=redis://casmarts-core-cache:6379/1
+      - CELERY_BACKEND=redis://casmarts-core-cache:6379/2
       - SEAWEEDFS_MASTER_URL=http://casmarts-core-storage:9333
       - SEAWEEDFS_VOLUME_URL=http://casmarts-core-storage:8080
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
@@ -79,16 +80,18 @@ services:
       dockerfile: Dockerfile
     container_name: consulta-smart-celery-beat
     command: "celery -A app.workers.celery_app beat --loglevel=info"
+    env_file:
+      - .env
     environment:
       - APP_ENV=${APP_ENV:-development}
-      - DB_HOST=casmarts-core-db
+      - DB_HOST=casmarts-core-db-primary
       - DB_PORT=5432
       - DB_USER=${DB_USER:-consultarpp_user}
       - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
       - DB_NAME=${DB_NAME:-consultarpp_db}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/0
-      - CELERY_BROKER=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/1
-      - CELERY_BACKEND=redis://:${REDIS_PASSWORD:-redis_secure_2026}@casmarts-core-cache:6379/2
+      - REDIS_URL=redis://casmarts-core-cache:6379/0
+      - CELERY_BROKER=redis://casmarts-core-cache:6379/1
+      - CELERY_BACKEND=redis://casmarts-core-cache:6379/2
     volumes:
       - ./backend:/app
     networks:
@@ -102,11 +105,13 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: consulta-smart-frontend
+    env_file:
+      - .env
     environment:
       - VITE_API_URL=/consultarpp/api/v1
       - VITE_APP_NAME=ConsultaRPP
     ports:
-      - "3000:5173"
+      - "3006:5173"
     volumes:
       - ./frontend:/app
       - frontend-node-modules:/app/node_modules

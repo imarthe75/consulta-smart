@@ -30,103 +30,104 @@ async def login(
     db: AsyncSession = Depends(get_session)
 ) -> dict:
     """
-    Endpoint de Login compatible con OAuth2PasswordRequestForm para soportar 
-    tanto JSON (frontend personalizado) como form-data (interfaz de Swagger/OpenAPI).
+    Endpoint de Login personalizado que valida contra Authentik (OIDC).
+    Evita que el usuario tenga que ver el panel de Authentik.
     """
     try:
-        # form_data.username puede ser el email por convención OAuth2
+        import requests
+        
         email = form_data.username
         password = form_data.password
         
-        logger.info(f"Intento de login para: {email}")
-        user_repo = PostgresUserRepository(db)
+        logger.info(f"Intento de login personalizado para: {email}")
         
-        # Buscar usuario en la base de datos
-        user_entity = await user_repo.find_by_email(email)
+        # Authentik Token Endpoint (Internal)
+        token_url = f"{settings.AUTHENTIK_INTERNAL_URL}/application/o/token/"
         
-        # Lógica especial para primer login (crear usuario demo si no existe)
-        if not user_entity and email == settings.DEMO_USER_EMAIL and password == settings.DEMO_USER_PASSWORD:
-            logger.info("Creando usuario demo por primera vez...")
-            from app.domain.entities.user import User
-            user_entity = User(
-                email=settings.DEMO_USER_EMAIL,
-                username=settings.DEMO_USER_USERNAME,
-                password_hash=get_password_hash(settings.DEMO_USER_PASSWORD),
-                roles=["user", "admin"]
-            )
-            await user_repo.create(user_entity)
-            await db.commit()
-            # Recargar para asegurar persistencia
-            user_entity = await user_repo.find_by_email(email)
+        # Exchange credentials for token
+        data = {
+            "grant_type": "password",
+            "username": email,
+            "password": password,
+            "client_id": settings.AUTHENTIK_CLIENT_ID,
+            "client_secret": settings.AUTHENTIK_CLIENT_SECRET,
+            "scope": "openid profile email"
+        }
         
-        if not user_entity or not verify_password(password, user_entity.password_hash):
+        response = requests.post(token_url, data=data)
+        
+        if response.status_code != 200:
+            logger.warning(f"Fallo de autenticación en Authentik para {email}: {response.text}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="El correo o la contraseña son incorrectos",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
-        # Generar Token Real
-        access_token = create_access_token(
-            data={"sub": user_entity.email, "user_id": str(user_entity.id), "roles": user_entity.roles}
-        )
+        token = response.json()
         
-        # Nota: Retornamos formato OAuth2 estándar para compatibilidad con librerías frontend
+        # Obtener información del usuario (Internal)
+        user_info_url = f"{settings.AUTHENTIK_INTERNAL_URL}/application/o/userinfo/"
+        headers = {"Authorization": f"Bearer {token['access_token']}"}
+        user_info_resp = requests.get(user_info_url, headers=headers)
+        user_info = user_info_resp.json()
+        
         return {
-            "access_token": access_token, 
+            "access_token": token['access_token'], 
             "token_type": "bearer",
-            "user_id": str(user_entity.id),
-            "email": user_entity.email
+            "expires_in": token['expires_in'],
+            "refresh_token": token.get('refresh_token'),
+            "user_id": user_info.get('sub'),
+            "email": email,
+            "username": user_info.get('preferred_username'),
+            "roles": user_info.get('realm_access', {}).get('roles', [])
         }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error en login: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error interno del servidor")
+        logger.error(f"Error en login personalizado: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor en la autenticación")
 
 @router.get("/guest")
 @router.post("/guest")
-async def guest_login(
-    db: AsyncSession = Depends(get_session)
-) -> dict:
+async def guest_login() -> dict:
     """
-    Endpoint para Login Anónimo (Widget).
-    Genera un token para un usuario 'guest'.
+    Endpoint para Login de Widget.
+    Autentica contra Authentik usando el usuario dedicado del widget.
     """
     try:
-        email = "guest@consultarpp.mx"
-        logger.info(f"Login anónimo solicitado para Widget")
-        user_repo = PostgresUserRepository(db)
+        import requests
         
-        user_entity = await user_repo.find_by_email(email)
+        # Authentik Token Endpoint (Internal)
+        token_url = f"{settings.AUTHENTIK_INTERNAL_URL}/application/o/token/"
         
-        if not user_entity:
-            logger.info("Creando cuenta de invitado por primera vez...")
-            from app.domain.entities.user import User
-            user_entity = User(
-                email=email,
-                username="Invitado",
-                password_hash=get_password_hash("guest_secret_2026_rpp"),
-                roles=["guest"]
-            )
-            await user_repo.create(user_entity)
-            await db.commit()
-            user_entity = await user_repo.find_by_email(email)
+        data = {
+            "grant_type": "password",
+            "username": "widget@casmarts.com",
+            "password": "casmarts_widget_2026",
+            "client_id": settings.AUTHENTIK_CLIENT_ID,
+            "client_secret": settings.AUTHENTIK_CLIENT_SECRET,
+            "scope": "openid profile email"
+        }
         
-        access_token = create_access_token(
-            data={"sub": user_entity.email, "user_id": str(user_entity.id), "roles": user_entity.roles}
-        )
+        response = requests.post(token_url, data=data)
+        
+        if response.status_code != 200:
+            raise Exception("Failed to get widget token")
+            
+        token = response.json()
         
         return {
-            "access_token": access_token, 
+            "access_token": token['access_token'], 
             "token_type": "bearer",
-            "user_id": str(user_entity.id),
-            "email": user_entity.email,
-            "role": "guest"
+            "expires_in": token['expires_in'],
+            "refresh_token": token.get('refresh_token'),
+            "email": "widget@casmarts.com",
+            "role": "user"
         }
     except Exception as e:
-        logger.error(f"Error en guest login: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error interno en sesión de invitado")
+        logger.error(f"Error en guest login via Keycloak: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error de autenticación centralizada para el widget")
 
 @router.post("/register")
 async def register(
