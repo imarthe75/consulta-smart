@@ -18,6 +18,7 @@ async def init_db():
     global _engine
     
     try:
+        logger.info(f"Connecting to database at {settings.DB_HOST}:{settings.DB_PORT}")
         _engine = create_async_engine(
             settings.DATABASE_URL,
             echo=settings.DEBUG,

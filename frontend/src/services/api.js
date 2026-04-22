@@ -2,19 +2,19 @@ import axios from 'axios'
 
 // Detectar URL del API dinámicamente basado en dónde se ejecuta
 const getApiBaseUrl = () => {
-    // En desarrollo (Vite), usar variable de entorno
-    if (import.meta.env.DEV) {
-        return import.meta.env.VITE_API_URL || '/api/v1'  // Usa proxy de Vite en desarrollo
+    // Usar la variable de entorno proporcionada por Vite (disponible tanto en dev como en build)
+    const envUrl = import.meta.env.VITE_API_URL;
+    if (envUrl) {
+        return envUrl;
     }
 
-    // En producción, construir dinámicamente usando el host actual
-    // El frontend se ejecuta en el mismo servidor que el backend
-    // Frontend: puerto 3000, Backend: puerto 3001
-    const protocol = window.location.protocol  // http: o https:
-    const hostname = window.location.hostname  // IP del servidor o dominio
-    const port = 3001                           // Puerto del backend
+    // Fallback para desarrollo local si no hay variable de entorno
+    if (import.meta.env.DEV) {
+        return '/api/v1';
+    }
 
-    return `${protocol}//${hostname}:${port}/api/v1`
+    // Fallback para producción usando el path relativo esperado en el gateway
+    return '/consultarpp/api/v1';
 }
 
 const API_BASE_URL = getApiBaseUrl()
@@ -43,7 +43,8 @@ api.interceptors.response.use(
     (error) => {
         if (error.response?.status === 401) {
             localStorage.removeItem('token')
-            window.location.href = '/login'
+            const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+            window.location.href = `${baseUrl}/login`
         }
         return Promise.reject(error)
     }

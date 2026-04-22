@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     
     # API Prefix
     API_PREFIX: str = os.getenv("API_PREFIX", "/api/v1")
+
+    # Identity & Access (Authentik - 100% Open Source)
+    AUTHENTIK_URL: str = os.getenv("AUTHENTIK_URL", "http://10.4.3.28/")
+    AUTHENTIK_CLIENT_ID: str = os.getenv("AUTHENTIK_CLIENT_ID", "consulta-smart")
+    AUTHENTIK_CLIENT_SECRET: Optional[str] = os.getenv("AUTHENTIK_CLIENT_SECRET")
     
     # Database (PostgreSQL 18 + asyncpg)
     DB_HOST: str = os.getenv("DB_HOST", "postgres")
@@ -28,6 +33,9 @@ class Settings(BaseSettings):
     
     @property
     def DATABASE_URL(self) -> str:
+        # Mask password for safety
+        masked_url = f"postgresql+asyncpg://{self.DB_USER}:****@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        # We can't use logger here easily if it's not initialized, so we use print or wait until init_db
         return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
     
     # Redis / Celery / Cache
@@ -99,10 +107,29 @@ class Settings(BaseSettings):
     DEMO_USER_PASSWORD: str = os.getenv("DEMO_USER_PASSWORD", "password123")
     DEMO_USER_USERNAME: str = os.getenv("DEMO_USER_USERNAME", "usuario_demo")
 
+    # Authentik / OIDC (Centralizada en Core)
+    AUTHENTIK_INTERNAL_URL: str = os.getenv("AUTHENTIK_INTERNAL_URL", "http://casmarts-core-authentik-server:9000")
+    
     @property
     def CORS_ORIGINS(self) -> List[str]:
-        origins = os.getenv("CORS_ORIGINS", "http://localhost:3000")
+        origins = os.getenv("CORS_ORIGINS", "*")
         return [o.strip() for o in origins.split(",")]
 
+# Initialize settings and override with Vault if possible
 settings = Settings()
+
+try:
+    from app.core.vault import vault_client
+    vault_secrets = vault_client.get_secrets()
+    if vault_secrets:
+        # Override critical secrets
+        if "SECRET_KEY" in vault_secrets: settings.SECRET_KEY = vault_secrets["SECRET_KEY"]
+        if "JWT_SECRET" in vault_secrets: settings.JWT_SECRET = vault_secrets["JWT_SECRET"]
+        if "DB_PASSWORD" in vault_secrets: settings.DB_PASSWORD = vault_secrets["DB_PASSWORD"]
+        if "GOOGLE_API_KEY" in vault_secrets: settings.GOOGLE_API_KEY = vault_secrets["GOOGLE_API_KEY"]
+        if "GROQ_API_KEY" in vault_secrets: settings.GROQ_API_KEY = vault_secrets["GROQ_API_KEY"]
+        print(f"🔒 Config loaded from Vault for {settings.APP_NAME}")
+except Exception as e:
+    print(f"⚠️ Vault integration skipped: {e}")
+
 CORS_ORIGINS = settings.CORS_ORIGINS

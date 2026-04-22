@@ -109,12 +109,13 @@ class EmbeddingGenerator:
                 await session.execute(
                     text("""
                         UPDATE document_chunks 
-                        SET embedding = :vec::vector
+                        SET embedding = :vec
                         WHERE id = :id
-                    """).bindparams(
-                        vec="[" + ",".join(map(str, embedding_list)) + "]",
-                        id=chunk_id
-                    )
+                    """),
+                    {
+                        "vec": "[" + ",".join(map(str, embedding_list)) + "]",
+                        "id": chunk_id
+                    }
                 )
                 updated += 1
             

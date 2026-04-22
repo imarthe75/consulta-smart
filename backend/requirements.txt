@@ -42,6 +42,8 @@ python-jose>=3.4.0
 passlib>=1.7.0
 cryptography>=44.0.0
 PyJWT>=2.10.1
+hvac>=2.3.0
+python-keycloak>=4.3.0
 
 # --- Utilities ---
 numpy>=2.1.0

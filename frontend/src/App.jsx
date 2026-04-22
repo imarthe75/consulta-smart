@@ -5,6 +5,7 @@ import Navigation from './components/Navigation'
 import ChatPage from './pages/ChatPage'
 import LoginPage from './pages/LoginPage'
 import WidgetPage from './pages/WidgetPage'
+import keycloak from './lib/keycloak'
 import DocumentsPage from './pages/DocumentsPage'
 import ResultsPage from './pages/ResultsPage'
 
@@ -19,7 +20,19 @@ function ProtectedRoute({ children }) {
 }
 
 function AppContent() {
-    const { isAuthenticated, token } = useAuthStore()
+    const { isAuthenticated, token, login, logout } = useAuthStore()
+
+    useEffect(() => {
+        if (keycloak.authenticated) {
+            const user = {
+                id: keycloak.tokenParsed.sub,
+                email: keycloak.tokenParsed.email,
+                username: keycloak.tokenParsed.preferred_username,
+                role: keycloak.tokenParsed.realm_access?.roles?.includes('admin') ? 'admin' : 'user'
+            }
+            login(user, keycloak.token)
+        }
+    }, [])
 
     return (
         <Routes>
@@ -47,7 +60,7 @@ function AppContent() {
 
 export default function App() {
     return (
-        <BrowserRouter>
+        <BrowserRouter basename={import.meta.env.BASE_URL}>
             <AppContent />
         </BrowserRouter>
     )

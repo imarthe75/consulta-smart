@@ -2,13 +2,15 @@ import React, { useState } from 'react'
 import { useAuthStore } from '../stores/authStore'
 import { authAPI } from '../services/api'
 import { useNavigate } from 'react-router-dom'
-import { Mail, Lock, Loader } from 'lucide-react'
+import { Mail, Lock, Loader, Eye, EyeOff, ShieldCheck } from 'lucide-react'
+import keycloak from '../lib/keycloak'
 
 export default function LoginPage() {
     const [isLogin, setIsLogin] = useState(true)
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
     const [username, setUsername] = useState('')
+    const [showPassword, setShowPassword] = useState(false)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState(null)
     const navigate = useNavigate()
@@ -44,104 +46,94 @@ export default function LoginPage() {
             <div className="w-full max-w-md bg-white rounded-lg shadow-lg p-8">
                 {/* Logo */}
                 <div className="text-center mb-8">
+                    <div className="flex justify-center mb-4">
+                        <div className="relative">
+                            <img src="/consultarpp/assets/logos/consulta-rpp-logo.svg" alt="ConsultaRPP Logo" className="w-20 h-20 rounded-2xl shadow-xl" />
+                            <span className="absolute -bottom-2 -right-2 text-3xl">🏛️</span>
+                        </div>
+                    </div>
                     <h1 className="text-4xl font-bold text-primary mb-2">ConsultaRPP</h1>
-                    <p className="text-gray-600">Sistema Inteligente de Consultas Legales</p>
+                    <p className="text-gray-600 font-medium">Sistema Inteligente de Consultas Legales</p>
                 </div>
 
-                {/* Form */}
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    {/* Email */}
+                {/* Formulario Personalizado */}
+                <form onSubmit={handleSubmit} className="space-y-6">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-bold text-slate-700 mb-2 uppercase tracking-wide">
                             Correo Electrónico
                         </label>
-                        <div className="relative">
-                            <Mail className="absolute left-3 top-3 text-gray-400" size={20} />
+                        <div className="relative group">
+                            <Mail className="absolute left-4 top-4 text-slate-400 group-focus-within:text-primary transition-colors" size={20} />
                             <input
                                 type="email"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
                                 required
-                                placeholder="tu@email.com"
-                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                                placeholder="usuario@casmarts.com"
+                                className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:outline-none focus:border-primary focus:bg-white transition-all shadow-inner"
                             />
                         </div>
                     </div>
 
-                    {/* Username (Solo para registro) */}
-                    {!isLogin && (
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Nombre de Usuario
-                            </label>
-                            <input
-                                type="text"
-                                value={username}
-                                onChange={(e) => setUsername(e.target.value)}
-                                required
-                                placeholder="usuario123"
-                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                            />
-                        </div>
-                    )}
-
-                    {/* Password */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-bold text-slate-700 mb-2 uppercase tracking-wide">
                             Contraseña
                         </label>
-                        <div className="relative">
-                            <Lock className="absolute left-3 top-3 text-gray-400" size={20} />
+                        <div className="relative group">
+                            <Lock className="absolute left-4 top-4 text-slate-400 group-focus-within:text-primary transition-colors" size={20} />
                             <input
-                                type="password"
+                                type={showPassword ? "text" : "password"}
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 required
                                 placeholder="••••••••"
-                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                                className="w-full pl-12 pr-12 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:outline-none focus:border-primary focus:bg-white transition-all shadow-inner"
                             />
+                            <button
+                                type="button"
+                                onClick={() => setShowPassword(!showPassword)}
+                                className="absolute right-4 top-4 text-slate-400 hover:text-primary transition-colors focus:outline-none"
+                            >
+                                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                            </button>
                         </div>
                     </div>
 
-                    {/* Error */}
                     {error && (
-                        <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                        <div className="p-4 bg-red-50 border-2 border-red-100 text-red-600 rounded-2xl text-sm font-medium animate-shake">
                             {error}
                         </div>
                     )}
 
-                    {/* Submit Button */}
                     <button
                         type="submit"
                         disabled={loading}
-                        className="w-full py-2 bg-primary text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium flex items-center justify-center space-x-2"
+                        className="w-full py-4 bg-primary text-white rounded-2xl hover:bg-blue-700 disabled:opacity-50 transition-all font-bold flex items-center justify-center space-x-3 shadow-xl active:scale-95"
                     >
-                        {loading && <Loader className="animate-spin" size={20} />}
-                        <span>{isLogin ? 'Iniciar sesión' : 'Registrarse'}</span>
+                        {loading ? <Loader className="animate-spin" size={24} /> : <ShieldCheck size={24} />}
+                        <span>{loading ? 'Validando...' : 'Iniciar sesión con CASmartS ID'}</span>
                     </button>
                 </form>
 
-                {/* Toggle */}
-                <div className="mt-6 text-center">
-                    <p className="text-gray-600 text-sm">
-                        {isLogin ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?'}{' '}
-                        <button
-                            onClick={() => {
-                                setIsLogin(!isLogin)
-                                setError(null)
-                            }}
-                            className="text-primary hover:underline font-medium"
-                        >
-                            {isLogin ? 'Registrarse' : 'Inicia sesión'}
-                        </button>
+                <div className="mt-10 text-center">
+                    <p className="text-[10px] text-slate-400 uppercase tracking-[0.3em] font-bold">
+                        Powered by Casmarts Core & Keycloak
                     </p>
                 </div>
 
                 {/* Demo Info */}
-                <div className="mt-8 p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-                    <p className="font-semibold mb-2">Demo Credentials:</p>
-                    <p>Email: demo@example.com</p>
-                    <p>Password: password123</p>
+                <div className="mt-8 p-6 bg-slate-50 border-2 border-slate-100 rounded-3xl text-xs text-slate-500">
+                    <p className="font-bold text-slate-700 mb-3 uppercase tracking-wider">Acceso Demo:</p>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <p className="font-semibold text-primary">Usuario Admin</p>
+                            <p>arquiteturacasmarts@gmail.com</p>
+                        </div>
+                        <div>
+                            <p className="font-semibold text-blue-500">Usuario Demo</p>
+                            <p>demo@casmarts.com</p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

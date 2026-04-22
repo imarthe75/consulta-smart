@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from app.core.database import get_session
 from app.infrastructure.knowledge_base import get_knowledge_base
-from app.core.auth_utils import get_current_user
+from app.core.keycloak_auth import get_current_user
 from app.core.logger import logger
 
 router = APIRouter(prefix="/api/v1/search", tags=["search"])
