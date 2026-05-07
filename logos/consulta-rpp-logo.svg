@@ -1,0 +1,31 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Escudo exterior azul oscuro (borde) -->
+  <path d="M128 20L50 60V120C50 170 128 220 128 220C128 220 206 170 206 120V60L128 20Z" fill="#0F3A7D" stroke="#0F3A7D" stroke-width="2"/>
+  
+  <!-- Escudo interior azul claro -->
+  <path d="M128 32L62 67V120C62 162 128 208 128 208C128 208 194 162 194 120V67L128 32Z" fill="#1E5BA8"/>
+  
+  <!-- Burbuja de chat principal (comment bubble) -->
+  <g>
+    <!-- Rectángulo de la burbuja -->
+    <rect x="75" y="70" width="106" height="70" rx="10" fill="#0099FF"/>
+    
+    <!-- Triángulo puntero (esquina inferior derecha) -->
+    <path d="M150 140L165 155L160 140Z" fill="#0099FF"/>
+    
+    <!-- Tres puntos (indicador de mensaje/texto) -->
+    <circle cx="95" cy="95" r="5" fill="white"/>
+    <circle cx="115" cy="95" r="5" fill="white"/>
+    <circle cx="135" cy="95" r="5" fill="white"/>
+    
+    <!-- Línea decorativa superior dentro de la burbuja -->
+    <line x1="90" y1="115" x2="150" y2="115" stroke="rgba(255,255,255,0.4)" stroke-width="2" stroke-linecap="round"/>
+  </g>
+  
+  <!-- Elemento decorativo: esquina con líneas (conexión/red) -->
+  <circle cx="185" cy="65" r="7" fill="#60A5FA" opacity="0.8"/>
+  <circle cx="78" cy="82" r="5" fill="#60A5FA" opacity="0.6"/>
+  
+  <!-- Línea decorativa conectando elementos -->
+  <path d="M82 85L95 75" stroke="#60A5FA" stroke-width="2" opacity="0.5" stroke-linecap="round"/>
+</svg>

@@ -1,11 +1,19 @@
 import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
+import { useAuth } from 'react-oidc-context'
 import { LogOut, MessageSquare, FileText, Search } from 'lucide-react'
 
 export default function Navigation() {
     const location = useLocation()
     const { user, logout } = useAuthStore()
+    const auth = useAuth()
+
+    const handleLogout = () => {
+        // Clear local store and trigger standard OIDC logout
+        logout();
+        auth.signoutRedirect();
+    }
 
     const isActive = (path) => location.pathname === path
 
@@ -25,7 +33,7 @@ export default function Navigation() {
             {/* Header with Logo */}
             <div className="p-4 border-b border-gray-200">
                 <div className="flex items-center space-x-3 mb-3">
-                    <img src="/src/assets/logo.svg" alt="ConsultaRPP" className="w-10 h-10 rounded-lg" />
+                    <img src={`${import.meta.env.BASE_URL}assets/logos/consulta-rpp-logo.svg`} alt="ConsultaRPP" className="w-10 h-10 rounded-lg object-contain" />
                     <div>
                         <h1 className="text-lg font-bold text-primary">ConsultaRPP</h1>
                         <p className="text-xs text-gray-500">Consultas Legales</p>
@@ -60,7 +68,7 @@ export default function Navigation() {
                         <p className="text-xs text-gray-500">{user?.email || ''}</p>
                     </div>
                     <button
-                        onClick={logout}
+                        onClick={handleLogout}
                         className="p-2 text-gray-600 hover:text-red-600 transition-colors"
                         title="Cerrar sesión"
                     >

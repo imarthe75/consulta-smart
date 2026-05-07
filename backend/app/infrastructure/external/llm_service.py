@@ -223,6 +223,43 @@ class VertexAIProvider(LLMProvider):
         return await service.embed(text)
 
 
+class NvidiaNimProvider(LLMProvider):
+    """NVIDIA NIM provider (OpenAI compatible)"""
+    
+    def __init__(self, api_key: str = settings.NVIDIA_NIM_API_KEY):
+        from openai import AsyncOpenAI
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=settings.NVIDIA_NIM_BASE_URL
+        )
+        self.chat_model = settings.NVIDIA_NIM_MODEL
+        logger.info(f"✅ NvidiaNimProvider initialized: {self.chat_model}")
+
+    async def chat(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        **kwargs
+    ) -> str:
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"❌ Error in NVIDIA NIM: {e}")
+            raise
+
+    async def embed(self, text: str) -> List[float]:
+        # NIM doesn't provide embeddings in the same way or we prefer local for speed/cost
+        service = get_local_embedding_service()
+        return await service.embed(text)
+
+
 class LLMService:
     """Main LLM service orchestrator"""
     
@@ -246,6 +283,8 @@ def get_llm_provider(name: str = "gemini") -> LLMProvider:
         return GroqProvider()
     elif name == "vertex":
         return VertexAIProvider()
+    elif name == "nvidia":
+        return NvidiaNimProvider()
     else:
         return GeminiProvider()
 

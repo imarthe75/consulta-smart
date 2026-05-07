@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import { useAuth } from 'react-oidc-context'
 import { useChatStore } from '../stores/chatStore'
 import { useDocumentStore } from '../stores/documentStore'
 import { useAuthStore } from '../stores/authStore'
@@ -16,9 +17,55 @@ export default function ChatInterface({ isWidget = false }) {
     const [editingSessionId, setEditingSessionId] = useState(null)
     const [newTitle, setNewTitle] = useState('')
     const messagesEndRef = useRef(null)
-    const { user, logout } = useAuthStore()
+    const { user, logout: storeLogout } = useAuthStore()
+    const auth = useAuth()
     const { messages, loading, error, addMessage, setMessages, setLoading, setError, clearMessages } = useChatStore()
     const { documents } = useDocumentStore()
+
+    const handleLogout = async () => {
+        try {
+            // Clear all local state immediately to prevent race conditions
+            storeLogout();
+            localStorage.clear();
+            sessionStorage.clear();
+
+            // Try primary method: use library's signoutRedirect with both logout mechanisms
+            const logoutRedirectUri = window.location.origin + import.meta.env.BASE_URL
+
+            // Build the manual end-session URL with all required parameters
+            const logoutUrl = new URL(window.location.origin + "/application/o/consulta-smart/end-session/");
+            logoutUrl.searchParams.append("post_logout_redirect_uri", logoutRedirectUri);
+
+            // Add id_token_hint if available (strengthens logout context in Authentik)
+            if (auth.user?.id_token) {
+                logoutUrl.searchParams.append("id_token_hint", auth.user.id_token);
+            }
+
+            // Also add state if available for additional security
+            if (auth.user?.state) {
+                logoutUrl.searchParams.append("state", auth.user.state);
+            }
+
+            console.log("Logging out from:", logoutUrl.toString());
+
+            // Give Authentik a clear endpoint to redirect to after logout
+            window.location.href = logoutUrl.toString();
+
+            // Safety timeout: if redirect hasn't happened in 3 seconds, force it
+            setTimeout(() => {
+                console.warn("Logout redirect timeout - forcing manual redirect");
+                window.location.href = logoutRedirectUri;
+            }, 3000);
+
+        } catch (error) {
+            console.error("Error during logout:", error);
+            // Nuclear option: clear everything and redirect immediately
+            localStorage.clear();
+            sessionStorage.clear();
+            sessionStorage.setItem("logout_initiated", "true");
+            window.location.href = window.location.origin + import.meta.env.BASE_URL;
+        }
+    }
 
     // Fetch initial sessions
     useEffect(() => {
@@ -95,7 +142,7 @@ export default function ChatInterface({ isWidget = false }) {
     const handleRetry = async () => {
         const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
         if (!lastUserMessage || !currentSessionId) return;
-        
+
         const activeSessionId = currentSessionId;
         setError(null);
         setLoading(true);
@@ -207,7 +254,7 @@ export default function ChatInterface({ isWidget = false }) {
                     {/* Header with Logo */}
                     <div className="p-6 border-b border-gray-100 bg-white">
                         <div className="flex items-center space-x-3">
-                            <img src="/src/assets/logo.svg" alt="Logo" className="w-10 h-10 rounded-xl shadow-sm" />
+                            <img src={`${import.meta.env.BASE_URL}assets/logos/consulta-rpp-logo.svg`} alt="Logo" className="w-10 h-10 rounded-xl shadow-sm object-contain" />
                             <div>
                                 <h1 className="text-xl font-bold text-slate-800 tracking-tight">ConsultaRPP</h1>
                                 <p className="text-[10px] text-blue-600 font-bold uppercase tracking-widest">Universal RAG</p>
@@ -254,86 +301,86 @@ export default function ChatInterface({ isWidget = false }) {
                     </div>
 
                     <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2">
-                            {sessions.map(session => (
-                                <div
-                                    key={session.id}
-                                    className={clsx(
-                                        'p-4 rounded-xl cursor-pointer transition-all group border',
-                                        currentSessionId === session.id
-                                            ? 'bg-blue-600 text-white border-blue-700 shadow-sm'
-                                            : 'bg-white text-gray-700 border-gray-100 hover:border-blue-200 hover:bg-blue-50'
-                                    )}
-                                    onClick={() => editingSessionId !== session.id && setCurrentSessionId(session.id)}
-                                >
-                                    <div className="flex items-center justify-between">
-                                        {editingSessionId === session.id ? (
-                                            <div className="flex items-center w-full space-x-1" onClick={e => e.stopPropagation()}>
-                                                <input
-                                                    type="text"
-                                                    value={newTitle}
-                                                    onChange={e => setNewTitle(e.target.value)}
-                                                    className="w-full px-2 py-1 text-sm text-black rounded border-none focus:ring-0"
-                                                    autoFocus
-                                                    onKeyDown={e => {
-                                                        if (e.key === 'Enter') handleSaveTitle(session.id)
-                                                        if (e.key === 'Escape') setEditingSessionId(null)
+                        {sessions.map(session => (
+                            <div
+                                key={session.id}
+                                className={clsx(
+                                    'p-4 rounded-xl cursor-pointer transition-all group border',
+                                    currentSessionId === session.id
+                                        ? 'bg-blue-600 text-white border-blue-700 shadow-sm'
+                                        : 'bg-white text-gray-700 border-gray-100 hover:border-blue-200 hover:bg-blue-50'
+                                )}
+                                onClick={() => editingSessionId !== session.id && setCurrentSessionId(session.id)}
+                            >
+                                <div className="flex items-center justify-between">
+                                    {editingSessionId === session.id ? (
+                                        <div className="flex items-center w-full space-x-1" onClick={e => e.stopPropagation()}>
+                                            <input
+                                                type="text"
+                                                value={newTitle}
+                                                onChange={e => setNewTitle(e.target.value)}
+                                                className="w-full px-2 py-1 text-sm text-black rounded border-none focus:ring-0"
+                                                autoFocus
+                                                onKeyDown={e => {
+                                                    if (e.key === 'Enter') handleSaveTitle(session.id)
+                                                    if (e.key === 'Escape') setEditingSessionId(null)
+                                                }}
+                                            />
+                                            <button onClick={() => handleSaveTitle(session.id)} className="p-1 hover:text-green-500"><Check size={14} /></button>
+                                            <button onClick={() => setEditingSessionId(null)} className="p-1 hover:text-red-500"><X size={14} /></button>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <span className="truncate text-sm font-medium pr-2">{session.title}</span>
+                                            <div className="flex opacity-0 group-hover:opacity-100 transition-all space-x-1">
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        setEditingSessionId(session.id)
+                                                        setNewTitle(session.title)
                                                     }}
-                                                />
-                                                <button onClick={() => handleSaveTitle(session.id)} className="p-1 hover:text-green-500"><Check size={14} /></button>
-                                                <button onClick={() => setEditingSessionId(null)} className="p-1 hover:text-red-500"><X size={14} /></button>
+                                                    className="p-1 hover:bg-blue-400 rounded"
+                                                >
+                                                    <Edit2 size={14} />
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        deleteSession(session.id)
+                                                    }}
+                                                    className="p-1 hover:bg-red-400 rounded"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
                                             </div>
-                                        ) : (
-                                            <>
-                                                <span className="truncate text-sm font-medium pr-2">{session.title}</span>
-                                                <div className="flex opacity-0 group-hover:opacity-100 transition-all space-x-1">
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation()
-                                                            setEditingSessionId(session.id)
-                                                            setNewTitle(session.title)
-                                                        }}
-                                                        className="p-1 hover:bg-blue-400 rounded"
-                                                    >
-                                                        <Edit2 size={14} />
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation()
-                                                            deleteSession(session.id)
-                                                        }}
-                                                        className="p-1 hover:bg-red-400 rounded"
-                                                    >
-                                                        <Trash2 size={14} />
-                                                    </button>
-                                                </div>
-                                            </>
-                                        )}
-                                    </div>
+                                        </>
+                                    )}
                                 </div>
-                            ))}
-                        </div>
-
-                        {/* Footer User Section */}
-                        <div className="p-6 border-t border-gray-100 bg-white">
-                            <div className="flex items-center justify-between">
-                                <div className="flex-1 min-w-0 mr-3">
-                                    <p className="text-sm font-bold text-slate-800 truncate">
-                                        {user?.username || 'Usuario'}
-                                    </p>
-                                    <p className="text-[11px] text-slate-400 truncate uppercase tracking-tighter">
-                                        {user?.role || 'User'}
-                                    </p>
-                                </div>
-                                <button
-                                    onClick={logout}
-                                    className="p-3 bg-slate-50 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all shadow-sm group"
-                                    title="Cerrar sesión"
-                                >
-                                    <LogOut size={20} className="group-hover:scale-110 transition-transform" />
-                                </button>
                             </div>
+                        ))}
+                    </div>
+
+                    {/* Footer User Section */}
+                    <div className="p-6 border-t border-gray-100 bg-white">
+                        <div className="flex items-center justify-between">
+                            <div className="flex-1 min-w-0 mr-3">
+                                <p className="text-sm font-bold text-slate-800 truncate">
+                                    {user?.username || 'Usuario'}
+                                </p>
+                                <p className="text-[11px] text-slate-400 truncate uppercase tracking-tighter">
+                                    {user?.role || 'User'}
+                                </p>
+                            </div>
+                            <button
+                                onClick={handleLogout}
+                                className="p-3 bg-slate-50 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all shadow-sm group"
+                                title="Cerrar sesión"
+                            >
+                                <LogOut size={20} className="group-hover:scale-110 transition-transform" />
+                            </button>
                         </div>
                     </div>
+                </div>
             )}
 
             {/* Chat Area - Ocupa todo si no hay sidebar */}
@@ -343,7 +390,7 @@ export default function ChatInterface({ isWidget = false }) {
                         <div className="flex flex-col items-center justify-center h-full text-gray-400 space-y-6">
                             <div className="relative">
                                 <div className="p-8 bg-white rounded-3xl shadow-xl animate-bounce duration-[3000ms]">
-                                    <img src="/consultarpp/assets/logos/consulta-rpp-logo.svg" alt="Logo" className="w-24 h-24" />
+                                    <img src={`${import.meta.env.BASE_URL}assets/logos/consulta-rpp-logo.svg`} alt="Logo" className="w-24 h-24 object-contain" />
                                 </div>
                                 <span className="absolute -top-4 -right-4 text-5xl animate-pulse">🏛️</span>
                             </div>
@@ -367,7 +414,7 @@ export default function ChatInterface({ isWidget = false }) {
                                         : 'bg-white text-slate-800 rounded-bl-none border-slate-200'
                                 )}>
                                     <div className="text-[14px] whitespace-pre-wrap leading-tight tabular-nums markdown-content prose prose-slate prose-sm max-w-none text-slate-800">
-                                        <ReactMarkdown 
+                                        <ReactMarkdown
                                             remarkPlugins={[remarkGfm]}
                                         >
                                             {msg.content}
@@ -390,7 +437,7 @@ export default function ChatInterface({ isWidget = false }) {
                             </div>
                         ))
                     )}
-                    
+
                     {loading && (
                         <div className="flex justify-start">
                             <div className="bg-white border border-slate-200 text-slate-400 px-8 py-4 rounded-3xl shadow-sm italic flex items-center space-x-3">

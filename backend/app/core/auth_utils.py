@@ -1,11 +1,15 @@
-# Auth Utils - JWT and Password Hashing
-
 import jwt
+from jwt import PyJWKClient
 from datetime import datetime, timedelta
-from typing import Optional, Any, Union
+from typing import Optional
 from passlib.context import CryptContext
 from app.core.config import settings
 from app.core.logger import logger
+import uuid
+
+# Configuration for Authentik OIDC
+jwks_url = f"{settings.AUTHENTIK_INTERNAL_URL}/application/o/{settings.AUTHENTIK_CLIENT_ID}/jwks/"
+jwk_client = PyJWKClient(jwks_url)
 
 # Contexto para hashing de contraseñas
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -31,45 +35,77 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 def decode_access_token(token: str) -> Optional[dict]:
-    """Decodificar y validar un token JWT"""
+    """Decodificar y validar un token JWT de Authentik usando JWKS"""
     try:
-        decoded_token = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-        return decoded_token if decoded_token["exp"] >= datetime.utcnow().timestamp() else None
+        signing_key = jwk_client.get_signing_key_from_jwt(token)
+        decoded_token = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=settings.AUTHENTIK_CLIENT_ID,
+            options={"verify_exp": True}
+        )
+        return decoded_token
     except Exception as e:
-        logger.error(f"Error decodificando JWT: {e}")
-        return None
+        logger.error(f"Error decodificando JWT de Authentik: {e}")
+        # Intentar fallback con JWT local (para el widget o migraciones)
+        try:
+            return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        except:
+            return None
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.core.database import get_session
 from app.infrastructure.repositories.user_repository import PostgresUserRepository
+from app.infrastructure.models import UserModel
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login", auto_error=False)
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
     session: AsyncSession = Depends(get_session)
 ) -> dict:
-    """Extraer usuario del token JWT y validar existencia"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Credenciales no válidas",
         headers={"WWW-Authenticate": "Bearer"},
     )
     
+    if not token:
+        raise credentials_exception
+
     payload = decode_access_token(token)
     if not payload:
         raise credentials_exception
         
-    user_email: str = payload.get("sub")
-    if user_email is None:
+    user_email: str = payload.get("email") or payload.get("sub")
+    if not user_email:
         raise credentials_exception
         
+    # Validar si es el widget
+    is_widget = payload.get("is_widget", False)
+    
     repo = PostgresUserRepository(session)
     user = await repo.find_by_email(user_email)
     
-    if user is None:
+    # Auto-registro si el usuario viene de Authentik pero no está en la BD local
+    if user is None and not is_widget:
+        logger.info(f"Auto-registrando usuario desde Authentik: {user_email}")
+        new_user = UserModel(
+            id=str(uuid.uuid4()),
+            email=user_email,
+            username=payload.get("preferred_username") or user_email.split("@")[0],
+            password_hash=None, # No password stored! Authentik manages auth
+            is_active=True,
+            roles='["user"]'
+        )
+        session.add(new_user)
+        await session.commit()
+        user = new_user
+    elif user is None:
         raise credentials_exception
         
     return {
@@ -78,3 +114,4 @@ async def get_current_user(
         "username": user.username,
         "roles": user.roles
     }
+

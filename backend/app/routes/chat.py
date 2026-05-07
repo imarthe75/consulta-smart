@@ -10,7 +10,7 @@ from app.core.response import APIResponse
 from app.application.dtos.common_dtos import ChatQueryDTO
 from app.application.services.chat_service import get_chat_service
 from app.core.logger import logger
-from app.core.keycloak_auth import get_current_user
+from app.core.auth_utils import get_current_user
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
