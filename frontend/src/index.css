@@ -71,7 +71,7 @@ body {
     animation: slideUp 0.3s ease-out;
 }
 
-/* Estilos de Tabla y Markdown en Chat */
+/* Estilos de Tabla y Markdown en Chat - Casmarts Brand */
 .markdown-content table {
     width: 100%;
     margin-top: 1rem;
@@ -84,17 +84,23 @@ body {
 }
 
 .markdown-content th {
-    background-color: #f8fafc;
-    color: #1e293b;
+    background-color: #2C3E50; /* Azul Metálico */
+    color: #FFFFFF; /* Texto Blanco */
     font-weight: 600;
-    padding: 0.5rem 0.75rem;
+    padding: 0.75rem 1rem;
     text-align: left;
-    border-bottom: 2px solid #e2e8f0;
+    border: none;
 }
 
 .markdown-content td {
-    padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid #f1f5f9;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #BDC3C7; /* Plata */
+    border-left: none;
+    border-right: none;
+}
+
+.markdown-content tr:nth-child(even) {
+    background-color: #F8FAFC; /* Sombreado gris muy claro */
 }
 
 /* Compactación ULTRADENSA de Párrafos y Listas */

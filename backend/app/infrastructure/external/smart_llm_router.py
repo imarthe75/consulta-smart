@@ -33,6 +33,7 @@ class SmartLLMRouter:
     def __init__(self):
         self.providers = {
             "vertex": None,
+            "nvidia": None,
             "groq": None,
             "gemini": None,
         }
@@ -42,6 +43,13 @@ class SmartLLMRouter:
         # Estado de cada proveedor
         self.provider_status: Dict[str, Dict[str, Any]] = {
             "vertex": {
+                "status": ProviderStatus.AVAILABLE,
+                "last_error": None,
+                "error_count": 0,
+                "success_count": 0,
+                "rate_limit_until": None,
+            },
+            "nvidia": {
                 "status": ProviderStatus.AVAILABLE,
                 "last_error": None,
                 "error_count": 0,
@@ -79,7 +87,7 @@ class SmartLLMRouter:
         """Inicializa proveedores disponibles"""
         try:
             from app.infrastructure.external.llm_service import (
-                GroqProvider, GeminiProvider, VertexAIProvider
+                GroqProvider, GeminiProvider, VertexAIProvider, NvidiaNimProvider
             )
             
             # --- Vertex AI (Principal) ---
@@ -90,6 +98,14 @@ class SmartLLMRouter:
             else:
                 self.provider_status["vertex"]["status"] = ProviderStatus.UNAVAILABLE
                 logger.warning("⚠️ Vertex AI disabled (missing project ID in settings)")
+            
+            # --- NVIDIA NIM (High Performance) ---
+            if settings.NVIDIA_NIM_API_KEY:
+                self.providers["nvidia"] = NvidiaNimProvider()
+                logger.info("✅ NVIDIA NIM provider initialized")
+            else:
+                self.provider_status["nvidia"]["status"] = ProviderStatus.UNAVAILABLE
+                logger.warning("⚠️ NVIDIA NIM disabled (no API key)")
 
             # --- Groq (Secondary) ---
             if settings.GROQ_API_KEY:

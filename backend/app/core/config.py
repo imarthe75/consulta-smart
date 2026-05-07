@@ -93,6 +93,12 @@ class Settings(BaseSettings):
     
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL")  # For OpenRouter
+    
+    # NVIDIA NIM
+    NVIDIA_NIM_API_KEY: Optional[str] = os.getenv("NVIDIA_NIM_API_KEY")
+    NVIDIA_NIM_BASE_URL: str = os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    NVIDIA_NIM_MODEL: str = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-405b-instruct")
+
     TOP_P: float = float(os.getenv("TOP_P", "0.95"))
     
     EMBEDDING_DIMENSION: int = 384
