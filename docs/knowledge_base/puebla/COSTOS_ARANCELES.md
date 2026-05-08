@@ -1,4 +1,4 @@
-# Costos y Aranceles - Registro Público Puebla
+# Costos y Aranceles - IRCEP Puebla
 
 > **Última actualización**: Abril 2026  
 > **⚠️ Importante**: Los aranceles varían por municipio y año
@@ -36,6 +36,8 @@ La tarifa se calcula según el **valor catastral** del inmueble.
 | **Aclaración de Datos** | $50 - $150 MXN |
 | **Ampliación de Folio** | $100 - $300 MXN |
 
+**Nota sobre Copias**: Los costos son por **documento completo**. No se realizan entregas parciales de hojas específicas.
+
 ---
 
 ## 📝 Honorarios Notariales (Independientes)
@@ -59,7 +61,7 @@ Los siguientes costos **NO incluyen** aranceles del Registro:
 ### Caso 1: Registro de Casa ($350,000 MXN)
 
 ```
-Arancel RPPC:              $1,300 MXN
+Arancel IRCEP:              $1,300 MXN
 Honorarios Notariales:        $900 MXN
 Certificados iniciales:       $150 MXN
 Gestiones/trámites:          $150 MXN
@@ -70,7 +72,7 @@ TOTAL ESTIMADO:           $2,500 MXN
 ### Caso 2: Disolución de Usufructo
 
 ```
-Arancel RPPC (cancelación):   $200 MXN
+Arancel IRCEP (cancelación):   $200 MXN
 Honorarios Notariales:        $500 MXN
 Certificado nuevo:            $100 MXN
 ─────────────────────────────────────
@@ -80,7 +82,7 @@ TOTAL ESTIMADO:             $800 MXN
 ### Caso 3: Anotación de Demanda
 
 ```
-Arancel RPPC:                 $250 MXN
+Arancel IRCEP:                 $250 MXN
 Gestión ante juzgado:         $150 MXN
 Certificado:                   $75 MXN
 ─────────────────────────────────────
@@ -125,7 +127,7 @@ TOTAL ESTIMADO:             $475 MXN
 
 ## 📞 Verificación de Aranceles Actualizados
 
-Contactar directamente a tu Registro Público municipal:
+Contactar directamente a tu IRCEP municipal:
 
 | Municipio | Recomendación |
 |-----------|--------------|
@@ -139,7 +141,7 @@ Contactar directamente a tu Registro Público municipal:
 ## ⚠️ Aspectos Importantes
 
 ❌ **No confundir**:
-- Aranceles RPPC ≠ Honorarios de notario
+- Aranceles IRCEP ≠ Honorarios de notario
 - Ambos son obligatorios
 
 🔍 **Cambios anuales**:

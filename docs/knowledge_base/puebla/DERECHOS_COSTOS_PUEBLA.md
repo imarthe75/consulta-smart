@@ -90,7 +90,10 @@ El Instituto Registral y Catastral del Estado de Puebla (IRCEP) cobra **derechos
 | **Tradición/Antecedentes** | $150-$300 | 5-10 días | Perpetua (archivo) |
 | **Copia Certificada de Folio** | $100-$200 | 5 días | Perpetua |
 | **Copia de Acto Específico** | $50-$150 | 5 días | Perpetua |
-| **Corrección Matrimonial** | $75 | 10 días | Perpetua |
+| **Copia de Instrumento Notarial** | $40-$100 | 5 días | Perpetua |
+
+> [!IMPORTANT]
+> **Política de Certificación**: En el Estado de Puebla, los derechos por copias certificadas se cobran por **acto o instrumento completo**. NO se permite la solicitud de páginas aisladas ni el cobro proporcional por "número de hojas"; el costo es fijo por el documento íntegro solicitado.
 
 **Servicios Complementarios:**
 - Expedición urgente (24hrs): +$50-$100
