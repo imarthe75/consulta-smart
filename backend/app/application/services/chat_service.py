@@ -8,6 +8,7 @@ from app.core.logger import logger
 from app.infrastructure.knowledge_base import KnowledgeBase
 from app.infrastructure.external.smart_llm_router import get_smart_router
 from app.infrastructure.cache_layer import get_cache_instance
+from app.application.services.heuristics import heuristics
 from app.core.config import settings
 
 class ChatService:
@@ -96,10 +97,25 @@ class ChatService:
                                 "timestamp": datetime.utcnow().isoformat()
                             }
 
-            # 4. Traducción Semántica (RAG Rewrite) - OPTIMIZADO
+            # 4. Heurística de Jurisdicción y Entidades (Inspirado en idp-smart)
+            h_logic = heuristics.apply_search_logic(query)
+            h_jurisdiction = h_logic.get("jurisdiction")
+            h_entities = h_logic.get("entities")
+            
+            if h_jurisdiction:
+                logger.info(f"⚖️ Heurística: Jurisdicción detectada -> {h_jurisdiction}")
+                if not filters: filters = {}
+                filters["category"] = h_jurisdiction
+
+            # 5. Traducción Semántica (RAG Rewrite) - OPTIMIZADO
             logger.info("🚧 CP-1: Entrando a Rewriter")
             llm = await self._get_llm()
             search_query = query
+            
+            # Boost query con entidades críticas
+            if h_entities:
+                search_query = f"{' '.join(h_entities)} {query}"
+                logger.info(f"🚀 Boosting query con entidades: {h_entities}")
             
             # Solo reescribir si la consulta es compleja (> 3 palabras)
             if len(query.split()) > 3:
@@ -181,6 +197,17 @@ class ChatService:
 
             answer, provider = await llm.chat(messages=messages, system=system_prompt)
             
+            # 7. Blindaje de Alucinaciones (Grounding Verification)
+            if settings.STRICT_GROUNDING and relevant_docs:
+                logger.info("🛡️ Iniciando Blindaje (Grounding Check)...")
+                is_safe, corrected_answer = await self._verify_grounding(answer, relevant_docs, query)
+                if not is_safe:
+                    logger.warning("🚨 Alucinación detectada y bloqueada por el Blindaje")
+                    answer = corrected_answer
+                    provider = f"{provider} (Verified/Corrected)"
+                else:
+                    logger.info("✅ Respuesta validada por Grounding")
+            
             sources = list(set([d.get("source") for d in relevant_docs])) if relevant_docs else []
             
             return {
@@ -202,6 +229,40 @@ class ChatService:
                 "timestamp": datetime.utcnow().isoformat(),
                 "error": True
             }
+
+    async def _verify_grounding(self, answer: str, docs: List[Dict[str, Any]], original_query: str) -> tuple[bool, str]:
+        """
+        Verifica que la respuesta no contenga información inventada no presente en los documentos.
+        """
+        try:
+            llm = await self._get_llm()
+            context = "\n".join([d.get('content', '') for d in docs])
+            
+            verify_prompt = (
+                f"Eres un Auditor de Veracidad Legal. Tu tarea es comparar la RESPUESTA con el CONTEXTO proporcionado.\n\n"
+                f"CONTEXTO OFICIAL:\n{context[:3000]}\n\n"
+                f"RESPUESTA A AUDITAR:\n{answer}\n\n"
+                f"REGLA: Si la respuesta menciona costos, requisitos o procedimientos que NO están en el contexto, "
+                f"o si contradice una 'Regla Estricta' (como el cobro por página), marca como NO FIABLE.\n\n"
+                f"Responde en formato JSON:\n"
+                f"{{\"is_grounded\": true/false, \"corrected_answer\": \"(Solo si es necesario, una versión que diga que no hay información sobre los puntos inventados)\"}}"
+            )
+            
+            # Usar un modelo rápido para validación
+            res_json, _ = await llm.chat([{"role": "user", "content": verify_prompt}], temperature=0)
+            
+            # Intentar parsear JSON
+            try:
+                data = json.loads(res_json.strip())
+                return data.get("is_grounded", True), data.get("corrected_answer", answer)
+            except:
+                # Si falla el parseo, confiar en heurística simple de heuristics.py
+                is_grounded = heuristics.is_answer_grounded(answer, context)
+                return is_grounded, answer
+                
+        except Exception as e:
+            logger.error(f"Error en blindaje: {e}")
+            return True, answer
 
 _chat_service = None
 async def get_chat_service() -> ChatService:

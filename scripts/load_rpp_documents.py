@@ -76,7 +76,7 @@ async def load_rpp_documents():
     """Carga todos los documentos MD del rpp-registry en la base de conocimientos"""
     
     # Rutas de documentos
-    docs_path = Path(__file__).parent.parent / "docs" / "rpp-registry"
+    docs_path = Path(__file__).parent.parent / "docs" / "knowledge_base"
     
     if not docs_path.exists():
         logger.error(f"❌ Ruta de documentos no encontrada: {docs_path}")
@@ -98,7 +98,7 @@ async def load_rpp_documents():
             
             repo = PostgresDocumentRepository(session)
             vector_store = PostgresVectorStore(session)
-            llm_service = get_llm_provider()
+            llm_service = get_llm_provider(settings.LLM_PROVIDER)
             
             # Buscar todos los MD en rpp-registry
             logger.info("\n[STEP 2] Buscando documentos MD...")
@@ -145,7 +145,6 @@ async def load_rpp_documents():
                     # Crear documento
                     document = Document(
                         title=f"RPP Registry - {relative_path}",
-                        content=content,
                         category=category,
                         file_type="md",
                         seaweedfs_file_id=None,
@@ -167,11 +166,16 @@ async def load_rpp_documents():
                         embedding = await llm_service.embed(chunk)
                         
                         # Guardar chunk vectorizado
-                        await vector_store.add_document_chunk(
-                            document_id=created_doc.id,
-                            chunk_text=chunk,
-                            chunk_index=cidx,
-                            embedding=embedding
+                        from uuid6 import uuid7
+                        await vector_store.add(
+                            vector_id=str(uuid7()),
+                            text_content=chunk,
+                            embedding=embedding,
+                            metadata={
+                                "document_id": created_doc.id,
+                                "chunk_number": cidx,
+                                "source": str(relative_path)
+                            }
                         )
                     
                     await session.commit()

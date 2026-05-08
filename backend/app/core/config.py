@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     # API Prefix
     API_PREFIX: str = os.getenv("API_PREFIX", "/api/v1")
 
+    # Heuristics & Grounding (Blindage)
+    HEURISTICS_ENABLED: bool = os.getenv("HEURISTICS_ENABLED", "true").lower() == "true"
+    STRICT_GROUNDING: bool = os.getenv("STRICT_GROUNDING", "true").lower() == "true"
+    GROUNDING_THRESHOLD: float = float(os.getenv("GROUNDING_THRESHOLD", "0.85"))
+
     # Identity & Access (Authentik - 100% Open Source)
     AUTHENTIK_URL: str = os.getenv("AUTHENTIK_URL", "http://10.4.3.28/")
     AUTHENTIK_CLIENT_ID: str = os.getenv("AUTHENTIK_CLIENT_ID", "consulta-smart")
@@ -97,7 +102,7 @@ class Settings(BaseSettings):
     # NVIDIA NIM
     NVIDIA_NIM_API_KEY: Optional[str] = os.getenv("NVIDIA_NIM_API_KEY")
     NVIDIA_NIM_BASE_URL: str = os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
-    NVIDIA_NIM_MODEL: str = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-405b-instruct")
+    NVIDIA_NIM_MODEL: str = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
 
     TOP_P: float = float(os.getenv("TOP_P", "0.95"))
     

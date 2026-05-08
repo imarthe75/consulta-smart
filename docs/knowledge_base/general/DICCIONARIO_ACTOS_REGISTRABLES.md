@@ -548,10 +548,10 @@ Servicios de información y constancias del RPP.
 
 ### 7.4 **Copia Certificada de Folio o Acto**
 - **Descripción**: Reproducción oficial de folio actual o acto específico inscripto
-- **Derechos**: $100-$200 MXN
+- **Derechos**: $100-$200 MXN (Variable por estado)
 - **Plazo**: 5 días hábiles
 - **Vigencia**: Perpetua (para archivo)
-- **Notas**: Válida legalmente como prueba
+- **Notas**: Válida legalmente como prueba. **Importante**: Las copias se emiten siempre por el **documento o acto íntegro**. No se permite la solicitud de páginas o fragmentos específicos.
 
 ### 7.5 **Búsqueda Catastral (En Línea - Gratuita)**
 - **Descripción**: Consulta de datos catastrales sin certificación
