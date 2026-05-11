@@ -1,131 +1,135 @@
 services:
-  # El proyecto ahora utiliza los servicios centrales del ecosistema Casmarts
-  # (Postgres, Valkey, SeaweedFS) a través de la red 'aura-network'.
-
-  # FastAPI Backend
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: consulta-smart-backend
     env_file:
-      - .env
-    command: "uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+    - .env
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     environment:
-      - APP_ENV=${APP_ENV:-development}
-      - APP_DEBUG=${APP_DEBUG:-true}
-      - DB_HOST=casmarts-core-db-primary
-      - DB_PORT=5432
-      - DB_USER=${DB_USER:-consultarpp_user}
-      - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
-      - DB_NAME=consultarpp_db
-      - REDIS_URL=redis://casmarts-core-cache:6379/0
-      - CELERY_BROKER=redis://casmarts-core-cache:6379/1
-      - CELERY_BACKEND=redis://casmarts-core-cache:6379/2
-      - SEAWEEDFS_MASTER_URL=http://casmarts-core-storage:9333
-      - SEAWEEDFS_VOLUME_URL=http://casmarts-core-storage:8080
-      - TEMPERATURE=${TEMPERATURE:-0.7}
-      - MAX_TOKENS=${MAX_TOKENS:-2048}
-      - CORS_ORIGINS=${CORS_ORIGINS:-*}
-      - SECRET_KEY=${SECRET_KEY:-your-super-secret-key-change-in-production}
+    - APP_ENV=${APP_ENV:-development}
+    - APP_DEBUG=${APP_DEBUG:-true}
+    - DB_HOST=casmarts-core-db-primary
+    - DB_PORT=5432
+    - DB_USER=${DB_USER:-consultarpp_user}
+    - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
+    - DB_NAME=consultarpp_db
+    - REDIS_URL=redis://casmarts-core-cache:6379/0
+    - CELERY_BROKER=redis://casmarts-core-cache:6379/1
+    - CELERY_BACKEND=redis://casmarts-core-cache:6379/2
+    - SEAWEEDFS_MASTER_URL=http://casmarts-core-storage:9333
+    - SEAWEEDFS_VOLUME_URL=http://casmarts-core-storage:8080
+    - TEMPERATURE=${TEMPERATURE:-0.7}
+    - MAX_TOKENS=${MAX_TOKENS:-2048}
+    - CORS_ORIGINS=${CORS_ORIGINS:-*}
+    - SECRET_KEY=${SECRET_KEY:-your-super-secret-key-change-in-production}
     ports:
-      - "8202:8000"
+    - 8202:8000
     volumes:
-      - ./backend:/app
-      - ./docs:/app/docs
-      - ./scripts:/app/scripts
+    - ./backend:/app
+    - ./docs:/app/docs
+    - ./scripts:/app/scripts
     networks:
-      - aura-network
-      - consulta-smart-network
-
-  # Celery Worker
+    - aura-network
+    - consulta-smart-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
   celery-worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: consulta-smart-celery-worker
-    command: "celery -A app.workers.celery_app worker --loglevel=info --concurrency=4"
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
     env_file:
-      - .env
+    - .env
     environment:
-      - APP_ENV=${APP_ENV:-development}
-      - DB_HOST=casmarts-core-db-primary
-      - DB_PORT=5432
-      - DB_USER=${DB_USER:-consultarpp_user}
-      - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
-      - DB_NAME=consultarpp_db
-      - REDIS_URL=redis://casmarts-core-cache:6379/0
-      - CELERY_BROKER=redis://casmarts-core-cache:6379/1
-      - CELERY_BACKEND=redis://casmarts-core-cache:6379/2
-      - SEAWEEDFS_MASTER_URL=http://casmarts-core-storage:9333
-      - SEAWEEDFS_VOLUME_URL=http://casmarts-core-storage:8080
-      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
-      - TEMPERATURE=${TEMPERATURE:-0.7}
-      - MAX_TOKENS=${MAX_TOKENS:-2048}
+    - APP_ENV=${APP_ENV:-development}
+    - DB_HOST=casmarts-core-db-primary
+    - DB_PORT=5432
+    - DB_USER=${DB_USER:-consultarpp_user}
+    - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
+    - DB_NAME=consultarpp_db
+    - REDIS_URL=redis://casmarts-core-cache:6379/0
+    - CELERY_BROKER=redis://casmarts-core-cache:6379/1
+    - CELERY_BACKEND=redis://casmarts-core-cache:6379/2
+    - SEAWEEDFS_MASTER_URL=http://casmarts-core-storage:9333
+    - SEAWEEDFS_VOLUME_URL=http://casmarts-core-storage:8080
+    - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+    - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    - GROQ_API_KEY=${GROQ_API_KEY}
+    - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+    - TEMPERATURE=${TEMPERATURE:-0.7}
+    - MAX_TOKENS=${MAX_TOKENS:-2048}
     volumes:
-      - ./backend:/app
+    - ./backend:/app
     networks:
-      - aura-network
-      - consulta-smart-network
+    - aura-network
+    - consulta-smart-network
     restart: on-failure
-
-  # Celery Beat
+    deploy:
+      resources:
+        limits:
+          memory: 1G
   celery-beat:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: consulta-smart-celery-beat
-    command: "celery -A app.workers.celery_app beat --loglevel=info"
+    command: celery -A app.workers.celery_app beat --loglevel=info
     env_file:
-      - .env
+    - .env
     environment:
-      - APP_ENV=${APP_ENV:-development}
-      - DB_HOST=casmarts-core-db-primary
-      - DB_PORT=5432
-      - DB_USER=${DB_USER:-consultarpp_user}
-      - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
-      - DB_NAME=consultarpp_db
-      - REDIS_URL=redis://casmarts-core-cache:6379/0
-      - CELERY_BROKER=redis://casmarts-core-cache:6379/1
-      - CELERY_BACKEND=redis://casmarts-core-cache:6379/2
+    - APP_ENV=${APP_ENV:-development}
+    - DB_HOST=casmarts-core-db-primary
+    - DB_PORT=5432
+    - DB_USER=${DB_USER:-consultarpp_user}
+    - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
+    - DB_NAME=consultarpp_db
+    - REDIS_URL=redis://casmarts-core-cache:6379/0
+    - CELERY_BROKER=redis://casmarts-core-cache:6379/1
+    - CELERY_BACKEND=redis://casmarts-core-cache:6379/2
     volumes:
-      - ./backend:/app
+    - ./backend:/app
     networks:
-      - aura-network
-      - consulta-smart-network
+    - aura-network
+    - consulta-smart-network
     restart: on-failure
-
-  # Frontend (React 19)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: consulta-smart-frontend
     env_file:
-      - .env
+    - .env
     environment:
-      - VITE_API_URL=/consultarpp/api/v1
-      - VITE_APP_NAME=ConsultaRPP
+    - VITE_API_URL=/consultarpp/api/v1
+    - VITE_APP_NAME=ConsultaRPP
     ports:
-      - "8201:5173"
+    - 8201:5173
     volumes:
-      - ./frontend:/app
-      - frontend-node-modules:/app/node_modules
+    - ./frontend:/app
+    - frontend-node-modules:/app/node_modules
     depends_on:
-      - backend
+    - backend
     networks:
-      - aura-network
-      - consulta-smart-network
-
+    - aura-network
+    - consulta-smart-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 networks:
   consulta-smart-network:
     driver: bridge
   aura-network:
     external: true
-
 volumes:
-  frontend-node-modules:
+  frontend-node-modules: null
