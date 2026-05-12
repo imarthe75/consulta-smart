@@ -18,7 +18,31 @@ Este proyecto ha sido migrado para funcionar de manera dependiente del **Casmart
 *   **Workers:** Celery para procesamiento pesado de documentos y embeddings.
 *   **Agentes y Skills:** Lógica especializada ubicada en `/agents` y `/skills`.
 
-## 4. Acceso y Desarrollo
+## 4. Orquestación con Flowise AI
+
+Consulta-Smart utiliza **Flowise AI** como motor de orquestación visual para sus agentes de IA. Esta integración permite separar la lógica de negocio de la infraestructura de IA, facilitando la iteración rápida de prompts y modelos.
+
+### Arquitectura de Flujo
+```mermaid
+graph TD
+    User((Usuario)) --> FE[Frontend React]
+    FE --> BE[Backend FastAPI]
+    BE --> FW[Flowise AI Engine]
+    FW --> LLM[LLM: Gemini / Groq / GPT]
+    FW --> Tools[Tools: Vanna / Axioma / DB]
+    Tools --> FW
+    FW --> BE
+    BE --> FE
+```
+
+### Ventajas y Desventajas
+| **Aspecto** | **Ventajas** | **Desventajas** |
+| :--- | :--- | :--- |
+| **Desarrollo** | Prototipado visual ultra rápido y depuración de cadenas en tiempo real. | Curva de aprendizaje inicial de la herramienta visual. |
+| **Mantenibilidad** | Cambio de modelos (ej. de Gemini a Groq) sin tocar una sola línea de código en el backend. | Dependencia de un servicio adicional en el stack. |
+| **Extensibilidad** | Fácil integración con Custom Tools vía HTTP o Python. | Latencia marginal adicional debido al salto entre servicios. |
+
+## 5. Acceso y Desarrollo
 ### URLs de Acceso (Vía Gateway):
 | **Interfaz de Usuario:** `http://<IP_CORE>/consultarpp/` (Puerto: `3006`)
 | **Documentación API:** `http://<IP_CORE>/consultarpp/api/docs` (Puerto: `3005`)
