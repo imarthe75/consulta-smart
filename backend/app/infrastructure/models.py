@@ -152,13 +152,15 @@ class ChatMessageModel(Base):
     )
 
 
-User = UserModel
-Document = DocumentModel
-DocumentChunk = DocumentChunkModel
-ChatSession = ChatSessionModel
-ChatMessage = ChatMessageModel
+class SystemConfigModel(Base):
+    """ORM Model para configuraciones dinámicas del sistema (Prompts, etc)"""
+    __tablename__ = "system_configs"
+    
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False)
+    description = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-__all__ = ["User","Document","DocumentChunk","ChatSession","ChatMessage","UserModel","DocumentModel","DocumentChunkModel","ChatSessionModel","ChatMessageModel"]
 
 User = UserModel
 Document = DocumentModel
@@ -166,5 +168,6 @@ DocumentChunk = DocumentChunkModel
 VectorEmbedding = VectorEmbeddingModel
 ChatSession = ChatSessionModel
 ChatMessage = ChatMessageModel
+SystemConfig = SystemConfigModel
 
-__all__ = ["User","Document","DocumentChunk","VectorEmbedding","ChatSession","ChatMessage","UserModel","DocumentModel","DocumentChunkModel","VectorEmbeddingModel","ChatSessionModel","ChatMessageModel"]
+__all__ = ["User","Document","DocumentChunk","VectorEmbedding","ChatSession","ChatMessage","SystemConfig","UserModel","DocumentModel","DocumentChunkModel","VectorEmbeddingModel","ChatSessionModel","ChatMessageModel","SystemConfigModel"]

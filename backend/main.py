@@ -14,7 +14,7 @@ from app.core.logger import setup_logging, logger
 setup_logging(settings.LOG_LEVEL)
 
 from app.core.database import init_db as init_database, close_db
-from app.routes import health, documents, chat, auth, search
+from app.routes import health, documents, chat, auth, search, admin
 from fastapi.staticfiles import StaticFiles
 from app.routes.perf_test import router as perf_router
 
@@ -77,6 +77,7 @@ app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(search.router)
+app.include_router(admin.router)
 
 # ✅ Incluir endpoint de performance (sin auth)
 app.include_router(perf_router)
