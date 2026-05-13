@@ -55,7 +55,9 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="Chatbot inteligente para consultas sobre Registro Público de la Propiedad",
-    lifespan=lifespan
+    lifespan=lifespan,
+    root_path="/api",
+    servers=[{"url": "https://consulta.casmart.internal/api", "description": "Production Gateway"}]
 )
 
 # Middleware CORS - allow_origins=* para widget embebible en cualquier sitio

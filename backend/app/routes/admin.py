@@ -4,8 +4,10 @@ from pydantic import BaseModel
 from typing import Optional, List
 import logging
 
-from app.core.database import get_db
-from app.infrastructure.models import SystemConfig
+from app.core.database import get_session
+from app.infrastructure.models import SystemConfig, User
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.infrastructure.external.smart_llm_router import get_smart_router
 
 logger = logging.getLogger(__name__)
@@ -26,15 +28,17 @@ class PromptGenerateRequest(BaseModel):
     context: str
 
 @router.get("/configs/{key}", response_model=ConfigResponse)
-def get_config(key: str, db: Session = Depends(get_db)):
-    config = db.query(SystemConfig).filter(SystemConfig.key == key).first()
+async def get_config(key: str, db: AsyncSession = Depends(get_session)):
+    result = await db.execute(select(SystemConfig).filter(SystemConfig.key == key))
+    config = result.scalars().first()
     if not config:
         raise HTTPException(status_code=404, detail="Config not found")
     return config
 
 @router.post("/configs", response_model=ConfigResponse)
-def update_config(data: ConfigUpdate, db: Session = Depends(get_db)):
-    config = db.query(SystemConfig).filter(SystemConfig.key == data.key).first()
+async def update_config(data: ConfigUpdate, db: AsyncSession = Depends(get_session)):
+    result = await db.execute(select(SystemConfig).filter(SystemConfig.key == data.key))
+    config = result.scalars().first()
     if not config:
         config = SystemConfig(key=data.key, value=data.value, description=data.description)
         db.add(config)
@@ -42,8 +46,8 @@ def update_config(data: ConfigUpdate, db: Session = Depends(get_db)):
         config.value = data.value
         if data.description:
             config.description = data.description
-    db.commit()
-    db.refresh(config)
+    await db.commit()
+    await db.refresh(config)
     return config
 
 @router.post("/generate-prompt")
