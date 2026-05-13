@@ -110,7 +110,7 @@ services:
     env_file:
     - .env
     environment:
-    - VITE_API_URL=/consultarpp/api/v1
+    - VITE_API_URL=/api/v1
     - VITE_APP_NAME=ConsultaRPP
     ports:
     - 8201:5173
