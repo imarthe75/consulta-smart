@@ -12,7 +12,7 @@ import ResultsPage from './pages/ResultsPage'
 
 const baseUrl = window.location.origin + import.meta.env.BASE_URL
 const oidcConfig = {
-    authority: window.location.origin + "/application/o/consulta-smart/",
+    authority: "https://auth.casmart.internal/application/o/consulta-smart/",
     client_id: "consulta-smart",
     redirect_uri: baseUrl,
     post_logout_redirect_uri: baseUrl,
@@ -39,32 +39,22 @@ function ProtectedRoute({ children }) {
 
     // Sync to local store when authenticated
     React.useEffect(() => {
-        console.log("Auth State Changed:", {
-            isLoading: auth.isLoading,
-            isAuthenticated: auth.isAuthenticated,
-            error: auth.error?.message,
-            pathname: window.location.pathname
-        });
-
         if (auth.isAuthenticated && auth.user) {
             login(auth.user.profile, auth.user.access_token)
         }
-
-        // CRITICAL FIX: If we cleared our local token but OIDC still thinks it's auth, force it to clear
-        // This only runs if we are authenticated but DON'T have a token even after trying to login above
-        if (!localStorage.getItem('token') && auth.isAuthenticated && !auth.isLoading) {
-            console.warn("Session Mismatch Detected: Token missing but OIDC authenticated. Clearing OIDC user.");
-            if (auth.removeUser) auth.removeUser();
-            return;
-        }
-    }, [auth.isAuthenticated, auth.user, auth.isLoading, auth.error, login])
+    }, [auth.isAuthenticated, auth.user, login])
 
     if (auth.isLoading) {
         return (
-            <div className="flex h-screen items-center justify-center bg-textmain text-white font-sans">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primaryLight mb-4 mx-auto"></div>
-                    <p className="text-xs uppercase tracking-widest opacity-50">Sincronizando Identidad...</p>
+            <div className="flex h-screen w-screen items-center justify-center bg-[#0f172a] relative overflow-hidden font-sans">
+                {/* Background Blobs for Premium Feel */}
+                <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0">
+                    <div className="absolute top-[-10%] right-[-10%] w-[50%] h-[50%] bg-blue-500/10 rounded-full blur-[120px]"></div>
+                    <div className="absolute bottom-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500/5 rounded-full blur-[100px]"></div>
+                </div>
+                <div className="flex flex-col items-center gap-4 text-white relative z-10">
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-400"></div>
+                    <p className="font-semibold animate-pulse text-blue-400 tracking-wider text-sm">Sincronizando Identidad CASMARTS...</p>
                 </div>
             </div>
         )
