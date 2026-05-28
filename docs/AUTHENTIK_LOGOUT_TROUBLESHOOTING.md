@@ -43,7 +43,7 @@ python setup_consulta_smart_logout_flow.py
 Si prefieres verificar/configurar manualmente:
 
 1. **Accede a Authentik Admin:**
-   - URL: `https://arquitectura.casmart.internal/if/admin/`
+   - URL: `https://auth.casmart.internal/if/admin/`
    - Usuario: `akadmin`
 
 2. **Ve a Flows & Prompts → Flows**
@@ -60,9 +60,9 @@ Si prefieres verificar/configurar manualmente:
 
 6. **En Redirect URIs, verifica que estén:**
    ```
-   https://arquitectura.casmart.internal/consultarpp/
-   https://arquitectura.casmart.internal/consultarpp
-   http://10.4.3.28:8201/
+   https://consulta.casmart.internal/
+   https://consulta.casmart.internal
+   http://auth.casmart.internal/
    ```
 
 ### Paso 3: Verificar configuración del cliente
@@ -72,15 +72,15 @@ En Authentik Admin → Applications → Applications, verifica la app `Consulta 
 - **Name:** Consulta Smart
 - **Slug:** consulta-smart
 - **Provider:** Consulta Smart Provider
-- **Meta Launch URL:** `https://arquitectura.casmart.internal/consultarpp/`
+- **Meta Launch URL:** `https://consulta.casmart.internal/`
 
 ### Paso 4: Prueba el logout
 
-1. Accede a `https://arquitectura.casmart.internal/consultarpp/`
+1. Accede a `https://consulta.casmart.internal/`
 2. Inicia sesión normalmente
 3. Abre la consola del navegador (F12 → Console)
 4. Haz logout y observa:
-   - Si ves "Logging out from: `https://arquitectura.casmart.internal/application/o/consulta-smart/end-session/?...`"
+   - Si ves "Logging out from: `https://auth.casmart.internal/application/o/consulta-smart/end-session/?...`"
    - Deberías ser redirigido a `/consultarpp/` dentro de 3 segundos
 
 ## Debugging
@@ -108,17 +108,17 @@ Auth State Changed: {
   pathname: "/"
 }
 
-Logging out from: https://arquitectura.casmart.internal/application/o/consulta-smart/end-session/?post_logout_redirect_uri=https%3A%2F%2Farquitectura.casmart.internal%2Fconsultarpp%2F&id_token_hint=eyJ...
+Logging out from: https://auth.casmart.internal/application/o/consulta-smart/end-session/?post_logout_redirect_uri=https%3A%2F%2Fconsulta.casmart.internal%2F&id_token_hint=eyJ...
 ```
 
 ### C. Verifica el endpoint `end-session`
 
 ```bash
 # Obtén la configuración OIDC
-curl -s https://arquitectura.casmart.internal/application/o/consulta-smart/.well-known/openid-configuration | grep -i "end_session"
+curl -s https://auth.casmart.internal/application/o/consulta-smart/.well-known/openid-configuration | grep -i "end_session"
 
 # Resultado esperado:
-# "end_session_endpoint": "https://arquitectura.casmart.internal/application/o/consulta-smart/end-session/"
+# "end_session_endpoint": "https://auth.casmart.internal/application/o/consulta-smart/end-session/"
 ```
 
 ## Checklist de Verificación
@@ -126,7 +126,7 @@ curl -s https://arquitectura.casmart.internal/application/o/consulta-smart/.well
 - [ ] El script `setup_consulta_smart_logout_flow.py` se ejecutó sin errores
 - [ ] En Authentik Admin, `consulta-smart-invalidation-flow` existe
 - [ ] El provider `consulta-smart-provider` usa ese flow en `Invalidation flow`
-- [ ] Los `Redirect URIs` incluyen `https://arquitectura.casmart.internal/consultarpp/`
+- [ ] Los `Redirect URIs` incluyen `https://consulta.casmart.internal/`
 - [ ] El usuario puede hacer logout sin ver la pantalla `default invalidation flow`
 - [ ] El usuario es redirigido a `/consultarpp/` después del logout
 

@@ -25,6 +25,10 @@ services:
     - MAX_TOKENS=${MAX_TOKENS:-2048}
     - CORS_ORIGINS=${CORS_ORIGINS:-*}
     - SECRET_KEY=${SECRET_KEY:-your-super-secret-key-change-in-production}
+    - AUTHENTIK_URL=https://auth.casmart.internal
+    - AUTHENTIK_CLIENT_ID=consulta-smart
+    - AUTHENTIK_CLIENT_SECRET=casmarts_secret_2026
+    - AUTHENTIK_INTERNAL_URL=http://casmarts-core-authentik-server:9000
     ports:
     - 8202:8000
     volumes:
@@ -65,6 +69,8 @@ services:
     - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
     - TEMPERATURE=${TEMPERATURE:-0.7}
     - MAX_TOKENS=${MAX_TOKENS:-2048}
+    - AUTHENTIK_INTERNAL_URL=http://casmarts-core-authentik-server:9000
+    - AUTHENTIK_CLIENT_ID=consulta-smart
     volumes:
     - ./backend:/app
     networks:

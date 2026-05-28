@@ -55,9 +55,7 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="Chatbot inteligente para consultas sobre Registro Público de la Propiedad",
-    lifespan=lifespan,
-    root_path="/api",
-    servers=[{"url": "https://consulta.casmart.internal/api", "description": "Production Gateway"}]
+    lifespan=lifespan
 )
 
 # Middleware CORS - allow_origins=* para widget embebible en cualquier sitio
@@ -74,7 +72,7 @@ app.add_middleware(
 )
 
 # ✅ Incluir rutas
-app.include_router(health.router)
+app.include_router(health.router, prefix="/api")
 app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(chat.router)
@@ -82,17 +80,17 @@ app.include_router(search.router)
 app.include_router(admin.router)
 
 # ✅ Incluir endpoint de performance (sin auth)
-app.include_router(perf_router)
+app.include_router(perf_router, prefix="/api")
 
 # ✅ Servir archivos estáticos (Widget)
 static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-@app.get("/health")
+@app.get("/api/health")
 async def health_check():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
-@app.get("/")
+@app.get("/api")
 async def root():
     return {
         "app": settings.APP_NAME,
