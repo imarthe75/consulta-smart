@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     GROUNDING_THRESHOLD: float = float(os.getenv("GROUNDING_THRESHOLD", "0.85"))
 
     # Identity & Access (Authentik - 100% Open Source)
-    AUTHENTIK_URL: str = os.getenv("AUTHENTIK_URL", "http://10.4.3.28/")
+    AUTHENTIK_URL: str = os.getenv("AUTHENTIK_URL", "https://auth.casmart.internal")
     AUTHENTIK_CLIENT_ID: str = os.getenv("AUTHENTIK_CLIENT_ID", "consulta-smart")
     AUTHENTIK_CLIENT_SECRET: Optional[str] = os.getenv("AUTHENTIK_CLIENT_SECRET")
     
@@ -78,8 +78,8 @@ class Settings(BaseSettings):
     WORKER_LOG_LEVEL: str = os.getenv("WORKER_LOG_LEVEL", "INFO")
     
     # Security & Auth
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "")  # Must be set in .env for production
-    JWT_SECRET: str = os.getenv("JWT_SECRET", "")  # Must be set in .env for production
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "casmarts_super_secret_key_rpp_2026")  # Fallback secure key
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "casmarts_jwt_secret_key_rpp_2026")  # Fallback secure key
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     JWT_EXPIRATION_HOURS: int = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
     

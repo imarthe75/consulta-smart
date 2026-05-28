@@ -22,7 +22,7 @@ Tu app recolecta credenciales y las valida contra la API de Authentik. Útil par
 
 ## 2. Operaciones Administrativas (Admin Interface)
 
-Acceso: `https://arquitectura.casmart.internal/if/admin/`
+Acceso: `https://auth.casmart.internal/if/admin/`
 
 ### A. Directorio (Usuarios y Roles)
 *   **Users:** Gestión de identidades locales y sincronizadas.
@@ -41,7 +41,7 @@ Acceso: `https://arquitectura.casmart.internal/if/admin/`
 import requests
 
 def get_authentik_token(username, password):
-    url = "https://arquitectura.casmart.internal/application/o/token/"
+    url = "https://auth.casmart.internal/application/o/token/"
     payload = {
         'grant_type': 'password',
         'username': username,
@@ -75,7 +75,7 @@ spring:
             redirect-uri: "{baseUrl}/login/oauth2/code/authentik"
         provider:
           authentik:
-            issuer-uri: https://arquitectura.casmart.internal/application/o/tu-app-slug/
+            issuer-uri: https://auth.casmart.internal/application/o/tu-app-slug/
 ```
 
 ---
@@ -87,7 +87,7 @@ spring:
 import { AuthProvider, useAuth } from 'react-oidc-context';
 
 const oidcConfig = {
-    authority: "https://arquitectura.casmart.internal/application/o/tu-app-slug/",
+    authority: "https://auth.casmart.internal/application/o/tu-app-slug/",
     client_id: "tu-client-id",
     redirect_uri: window.location.origin + "/callback",
     response_type: "code",
@@ -108,7 +108,7 @@ export function App() {
 ```typescript
 export const authConfig = {
   config: {
-    authority: 'https://arquitectura.casmart.internal/application/o/tu-app-slug/',
+    authority: 'https://auth.casmart.internal/application/o/tu-app-slug/',
     redirectUrl: window.location.origin + '/callback',
     postLogoutRedirectUri: window.location.origin,
     clientId: 'tu-client-id',
@@ -124,8 +124,8 @@ export const authConfig = {
 
 ## 5. Documentación de API (Swagger)
 
-*   **Swagger UI:** `https://arquitectura.casmart.internal/api/v3/`
-*   **Schema:** `https://arquitectura.casmart.internal/api/v3/schema/`
+*   **Swagger UI:** `https://auth.casmart.internal/api/v3/`
+*   **Schema:** `https://auth.casmart.internal/api/v3/schema/`
 
 ---
 
@@ -146,7 +146,7 @@ Para que tu backend hable con la API de Authentik, necesitas un **Token de API**
 import requests
 
 def create_authentik_user(username, email, name):
-    url = "https://arquitectura.casmart.internal/api/v3/core/users/"
+    url = "https://auth.casmart.internal/api/v3/core/users/"
     headers = {
         "Authorization": "Bearer <tu-token-de-admin>",
         "Content-Type": "application/json"
@@ -166,7 +166,7 @@ def create_authentik_user(username, email, name):
 ### C. Ejemplo: Asignación a un Grupo/Rol
 ```python
 def add_user_to_group(user_pk, group_pk):
-    url = f"https://arquitectura.casmart.internal/api/v3/core/groups/{group_pk}/add_user/"
+    url = f"https://auth.casmart.internal/api/v3/core/groups/{group_pk}/add_user/"
     headers = {"Authorization": "Bearer <tu-token-de-admin>"}
     payload = {"pk": user_pk}
     

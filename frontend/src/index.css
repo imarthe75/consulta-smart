@@ -1,18 +1,22 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap');
 
 @theme {
-  --color-primary: #1a365d;
-  --color-secondary: #3182ce;
-  --color-accent: #63b3ed;
+  --color-primary: #1a3a5c;
+  --color-secondary: #142e4a;
+  --color-accent: rgba(26, 58, 92, 0.16);
 }
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'DM Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --radius-atom: 8px;
+  --radius-organism: 14px;
+  --height-btn-base: 44px;
 }
 
-/* Custom styles that were in tailwind.config but are now here or standard */
 @layer base {
   body {
     @apply bg-slate-50 text-slate-900;
+    font-family: 'DM Sans', sans-serif;
   }
 }
