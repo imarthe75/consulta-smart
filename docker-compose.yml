@@ -41,7 +41,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 2G
   celery-worker:
     build:
       context: ./backend
