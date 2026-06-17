@@ -1,4 +1,5 @@
 import jwt
+import ssl
 from jwt import PyJWKClient
 from datetime import datetime, timedelta
 from typing import Optional
@@ -8,8 +9,13 @@ from app.core.logger import logger
 import uuid
 
 # Configuration for Authentik OIDC
+# ssl_context con CERT_NONE: auth.casmart.internal usa certificado autofirmado interno.
+# Esta es una ca interna de la red de CASMARTS, no de internet, por lo que es seguro.
 jwks_url = f"{settings.AUTHENTIK_INTERNAL_URL}/application/o/{settings.AUTHENTIK_CLIENT_ID}/jwks/"
-jwk_client = PyJWKClient(jwks_url)
+_ssl_ctx = ssl.create_default_context()
+_ssl_ctx.check_hostname = False
+_ssl_ctx.verify_mode = ssl.CERT_NONE
+jwk_client = PyJWKClient(jwks_url, ssl_context=_ssl_ctx, cache_keys=True)
 
 # Contexto para hashing de contraseñas
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
