@@ -28,7 +28,8 @@ services:
     - AUTHENTIK_URL=https://auth.casmart.internal
     - AUTHENTIK_CLIENT_ID=consulta-smart
     - AUTHENTIK_CLIENT_SECRET=casmarts_secret_2026
-    - AUTHENTIK_INTERNAL_URL=http://casmarts-core-authentik-server:9000
+    - AUTHENTIK_INTERNAL_URL=https://auth.casmart.internal
+    - VAULT_URL=http://10.4.3.208:8200
     ports:
     - 8202:8000
     volumes:
@@ -69,8 +70,9 @@ services:
     - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
     - TEMPERATURE=${TEMPERATURE:-0.7}
     - MAX_TOKENS=${MAX_TOKENS:-2048}
-    - AUTHENTIK_INTERNAL_URL=http://casmarts-core-authentik-server:9000
+    - AUTHENTIK_INTERNAL_URL=https://auth.casmart.internal
     - AUTHENTIK_CLIENT_ID=consulta-smart
+    - VAULT_URL=http://10.4.3.208:8200
     volumes:
     - ./backend:/app
     networks:
@@ -120,6 +122,7 @@ services:
     environment:
     - VITE_API_URL=/api/v1
     - VITE_APP_NAME=ConsultaRPP
+    - VITE_API_TIMEOUT=60000
     ports:
     - 8201:3000
     volumes:
