@@ -6,7 +6,7 @@ import logging
 import fitz  # PyMuPDF
 
 from app.core.database import get_session
-from app.infrastructure.models import SystemConfig, User, Document, ChatbotProfile, DocumentChunk, PromptTestCase
+from app.infrastructure.models import SystemConfig, User, Document, ChatbotProfile, DocumentChunk, PromptTestCase, ChatbotProfileAuditLog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func, case
 from app.infrastructure.external.smart_llm_router import get_smart_router
@@ -160,6 +160,61 @@ async def generate_prompt(
         response_text, _ = await llm.chat(messages=messages, temperature=0.1, max_tokens=1000)
         return {"schema": response_text}
 
+def _snapshot_profile(profile: ChatbotProfile) -> dict:
+    """Serializa un ChatbotProfile a dict para la bitácora de auditoría.
+
+    Deliberadamente NO incluye custom_api_key (ni cifrada): el historial de
+    auditoría es una superficie adicional de exposición si se filtra, y no aporta
+    valor de negocio guardar ahí la clave de un proveedor de IA de terceros.
+    """
+    return {
+        "name": profile.name,
+        "system_prompt": profile.system_prompt,
+        "welcome_message": profile.welcome_message,
+        "title": profile.title,
+        "subtitle": profile.subtitle,
+        "logo_url": profile.logo_url,
+        "icon": profile.icon,
+        "primary_color": profile.primary_color,
+        "strictness_level": profile.strictness_level,
+        "strictness_score": profile.strictness_score,
+        "temperature": profile.temperature,
+        "top_p": profile.top_p,
+        "forbidden_topics": profile.forbidden_topics,
+        "rejection_message": profile.rejection_message,
+        "llm_provider": profile.llm_provider,
+        "llm_model": profile.llm_model,
+        "has_custom_key": bool(profile.custom_api_key),
+        "config_metadata": profile.config_metadata,
+        "is_active": profile.is_active,
+    }
+
+
+def _log_profile_change(
+    db: AsyncSession,
+    profile_id: str,
+    action: str,
+    current_user: dict,
+    before: Optional[dict] = None,
+    after: Optional[dict] = None,
+):
+    """Agrega (sin commitear) una entrada a la bitácora de cambios de un tema.
+
+    Práctica CMMI CM (gestión de configuración) — ver docstring de
+    ChatbotProfileAuditLogModel. El caller debe hacer `await db.commit()`
+    normalmente después (esta entrada viaja en la misma transacción que el
+    cambio real, para que ambas cosas se confirmen o se reviertan juntas).
+    """
+    db.add(ChatbotProfileAuditLog(
+        profile_id=profile_id,
+        action=action,
+        changed_by_id=current_user.get("id"),
+        changed_by_email=current_user.get("email"),
+        before=before,
+        after=after,
+    ))
+
+
 class ChatbotProfileDTO(BaseModel):
     id: str
     name: str
@@ -266,13 +321,25 @@ async def save_chatbot_profile(
 ):
     result = await db.execute(select(ChatbotProfile).filter(ChatbotProfile.id == data.id))
     profile = result.scalars().first()
-    
+
+    # El tema 'general' es de solo lectura: sirve como plantilla base y referencia
+    # canónica (system_prompt de fábrica), no debe poder sobreescribirse en su lugar.
+    # Cualquier personalización debe guardarse como un tema nuevo (otro id).
+    if data.id == "general" and profile is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="El tema 'general' es de solo lectura. Guarda tus cambios como un tema nuevo con otro identificador."
+        )
+
     # Manejo seguro de custom_api_key (preservar existente si viene enmascarada, cifrar si es nueva)
     api_key_to_save = data.custom_api_key
     if api_key_to_save and "•" in api_key_to_save:
         api_key_to_save = profile.custom_api_key if profile else None
     elif api_key_to_save:
         api_key_to_save = encrypt_secret(api_key_to_save)
+
+    is_new = profile is None
+    before_snapshot = None if is_new else _snapshot_profile(profile)
 
     if not profile:
         profile = ChatbotProfile(
@@ -320,7 +387,16 @@ async def save_chatbot_profile(
             profile.config_metadata = data.config_metadata
         if data.is_active is not None:
             profile.is_active = data.is_active
-            
+
+    await db.flush()  # asegura que profile tenga sus valores finales antes de la snapshot
+    _log_profile_change(
+        db, data.id,
+        action="create" if is_new else "update",
+        current_user=current_user,
+        before=before_snapshot,
+        after=_snapshot_profile(profile),
+    )
+
     await db.commit()
     await db.refresh(profile)
     return {"status": "success", "profile": profile}
@@ -331,13 +407,117 @@ async def delete_chatbot_profile(
     db: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_admin)
 ):
+    if profile_id == "general":
+        # Antes solo se bloqueaba en el frontend (AdminPage.jsx) — un DELETE directo a
+        # la API lo hubiera eliminado igual. Se refuerza aquí como fuente de verdad real.
+        raise HTTPException(status_code=400, detail="El tema 'general' no puede eliminarse.")
+
     result = await db.execute(select(ChatbotProfile).filter(ChatbotProfile.id == profile_id))
     profile = result.scalars().first()
     if not profile:
         raise HTTPException(status_code=404, detail="Perfil no encontrado")
+
+    _log_profile_change(
+        db, profile_id,
+        action="delete",
+        current_user=current_user,
+        before=_snapshot_profile(profile),
+        after=None,
+    )
     await db.delete(profile)
     await db.commit()
     return {"status": "success", "message": f"Perfil {profile_id} eliminado correctamente"}
+
+
+@router.get("/chatbot/profiles/{profile_id}/audit-log")
+async def get_profile_audit_log(
+    profile_id: str,
+    db: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(require_admin)
+):
+    """
+    Bitácora de cambios de un tema (práctica CMMI CM — gestión de configuración).
+
+    Se agregó tras un incidente real (2026-07-22): el tema 'general' quedó con un
+    system_prompt corrupto por un uso incorrecto del generador de prompts, y no
+    existía forma de saber quién lo cambió ni de recuperar el valor anterior.
+    """
+    result = await db.execute(
+        select(ChatbotProfileAuditLog)
+        .filter(ChatbotProfileAuditLog.profile_id == profile_id)
+        .order_by(ChatbotProfileAuditLog.created_at.desc())
+    )
+    entries = result.scalars().all()
+    return [
+        {
+            "id": e.id,
+            "action": e.action,
+            "changed_by_email": e.changed_by_email,
+            "before": e.before,
+            "after": e.after,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in entries
+    ]
+
+
+@router.post("/chatbot/profiles/{profile_id}/restore/{audit_log_id}")
+async def restore_profile_from_audit_log(
+    profile_id: str,
+    audit_log_id: str,
+    db: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(require_admin)
+):
+    """
+    Restaura un tema al estado ("after") capturado en una entrada específica de su
+    bitácora de cambios. No aplica a 'delete' (after es NULL en ese caso; para
+    recuperar un tema borrado hay que recrearlo manualmente con el 'before' de esa
+    entrada, ya que el id podría reutilizarse con datos distintos).
+    """
+    log_result = await db.execute(
+        select(ChatbotProfileAuditLog).filter(
+            ChatbotProfileAuditLog.id == audit_log_id,
+            ChatbotProfileAuditLog.profile_id == profile_id,
+        )
+    )
+    entry = log_result.scalars().first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entrada de bitácora no encontrada para este tema")
+    if not entry.after:
+        raise HTTPException(
+            status_code=400,
+            detail="Esta entrada no tiene un estado 'after' restaurable (corresponde a un borrado)."
+        )
+
+    profile_result = await db.execute(select(ChatbotProfile).filter(ChatbotProfile.id == profile_id))
+    profile = profile_result.scalars().first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="El tema ya no existe; no se puede restaurar en su lugar.")
+
+    before_snapshot = _snapshot_profile(profile)
+    snap = entry.after
+    for field in (
+        "name", "system_prompt", "welcome_message", "title", "subtitle", "logo_url",
+        "icon", "primary_color", "strictness_level", "strictness_score", "temperature",
+        "top_p", "forbidden_topics", "rejection_message", "llm_provider", "llm_model",
+        "config_metadata", "is_active",
+    ):
+        if field in snap:
+            setattr(profile, field, snap[field])
+    # custom_api_key deliberadamente no se toca: nunca vivió en el snapshot (ver _snapshot_profile)
+
+    await db.flush()
+    _log_profile_change(
+        db, profile_id,
+        action="restore",
+        current_user=current_user,
+        before=before_snapshot,
+        after=_snapshot_profile(profile),
+    )
+    await db.commit()
+    await db.refresh(profile)
+    return {"status": "success", "message": f"Tema '{profile_id}' restaurado al estado del {entry.created_at.isoformat()}"}
+
 
 @router.get("/chatbot/documents")
 async def get_chatbot_documents(

@@ -5,7 +5,7 @@ import { Search } from 'lucide-react'
 
 export default function ResultsPage() {
     return (
-        <div className="flex-1 overflow-y-auto p-6 md:p-8 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
+        <div className="flex-1 p-6 md:p-8 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
             <div className="max-w-4xl mx-auto space-y-6">
                 <ModuleBanner
                     badgeIcon={Search}

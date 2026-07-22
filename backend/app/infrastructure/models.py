@@ -203,6 +203,37 @@ class PromptTestCaseModel(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class ChatbotProfileAuditLogModel(Base):
+    """Bitácora de cambios de chatbot_profiles (práctica CMMI CM — gestión de configuración).
+
+    HALLAZGO real (2026-07-22): un usuario corrompió el system_prompt del tema
+    'general' vía el generador de prompts, y no existía forma de revertirlo — la
+    tabla chatbot_profiles no tenía historial de cambios. Esta tabla guarda un
+    snapshot antes/después de cada creación/edición/borrado, con quién y cuándo,
+    para poder auditar y restaurar sin depender de memoria humana o de reconstruir
+    el valor "de fábrica" a mano.
+
+    No se guarda custom_api_key en los snapshots (ni siquiera cifrada) — el
+    historial de auditoría es una superficie adicional de exposición si alguna vez
+    se filtra, y no aporta valor de negocio guardar la clave ahí.
+    """
+    __tablename__ = "chatbot_profile_audit_log"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid7()))
+    profile_id = Column(String(50), nullable=False, index=True)  # sin FK: debe sobrevivir al borrado del perfil
+    action = Column(String(20), nullable=False)  # 'create' | 'update' | 'delete' | 'restore'
+    changed_by_id = Column(String(36), nullable=True)
+    changed_by_email = Column(String(255), nullable=True)
+    before = Column(JSON, nullable=True)  # snapshot previo (NULL en 'create')
+    after = Column(JSON, nullable=True)   # snapshot resultante (NULL en 'delete')
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('idx_profile_audit_profile_id', 'profile_id'),
+        Index('idx_profile_audit_created_at', 'created_at'),
+    )
+
+
 User = UserModel
 Document = DocumentModel
 DocumentChunk = DocumentChunkModel
@@ -212,10 +243,12 @@ ChatMessage = ChatMessageModel
 SystemConfig = SystemConfigModel
 ChatbotProfile = ChatbotProfileModel
 PromptTestCase = PromptTestCaseModel
+ChatbotProfileAuditLog = ChatbotProfileAuditLogModel
 
 __all__ = [
     "User", "Document", "DocumentChunk", "VectorEmbedding", "ChatSession", "ChatMessage",
-    "SystemConfig", "ChatbotProfile", "PromptTestCase",
+    "SystemConfig", "ChatbotProfile", "PromptTestCase", "ChatbotProfileAuditLog",
     "UserModel", "DocumentModel", "DocumentChunkModel", "VectorEmbeddingModel",
-    "ChatSessionModel", "ChatMessageModel", "SystemConfigModel", "ChatbotProfileModel", "PromptTestCaseModel"
+    "ChatSessionModel", "ChatMessageModel", "SystemConfigModel", "ChatbotProfileModel",
+    "PromptTestCaseModel", "ChatbotProfileAuditLogModel"
 ]

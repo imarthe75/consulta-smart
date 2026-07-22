@@ -48,18 +48,23 @@ export default function LoginPage() {
                     <span>{auth.isLoading ? 'CONECTANDO...' : 'INICIAR SESIÓN CON CASMARTS ID'}</span>
                 </button>
 
-                <div className="mt-6 text-center">
-                    <a 
-                        href="https://arquitectura.casmart.internal/if/flow/password-recovery/" 
-                        className="text-xs text-white/60 hover:text-white font-medium transition-colors"
-                    >
-                        ¿Olvidaste tu contraseña?
-                    </a>
-                </div>
-
                 {auth.error && (
-                    <div className="mt-6 p-4 bg-red-950/50 border border-red-500/30 text-red-200 rounded-xl text-xs font-medium uppercase">
-                        Error de Conexión: {auth.error.message}
+                    <div className="mt-6 p-4 bg-amber-950/60 border border-amber-500/40 text-amber-200 rounded-2xl text-xs font-medium space-y-2 text-left">
+                        <div className="flex items-center gap-2 text-amber-400 font-bold uppercase tracking-wider">
+                            <ShieldCheck size={16} />
+                            <span>Certificado SSL Interno (CA Local)</span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-amber-200/90">
+                            El servidor de autenticación utiliza un certificado HTTPS interno. Si es tu primera vez accediendo desde este navegador, debes autorizar el certificado autofirmado:
+                        </p>
+                        <a 
+                            href="https://auth.casmart.internal/application/o/consulta-smart/.well-known/openid-configuration" 
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="inline-block mt-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-lg text-[11px] transition shadow"
+                        >
+                            🔐 Abrir y Aceptar Certificado SSL en Authentik ↗
+                        </a>
                     </div>
                 )}
 

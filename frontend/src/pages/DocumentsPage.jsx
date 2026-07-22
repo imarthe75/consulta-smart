@@ -23,7 +23,7 @@ export default function DocumentsPage() {
     }, [])
 
     return (
-        <div className="w-full h-full min-h-screen overflow-y-auto p-6 md:p-8 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
+        <div className="w-full min-h-screen p-6 md:p-8 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
             <div className="max-w-5xl mx-auto space-y-6">
                 <ModuleBanner
                     badgeIcon={Layers}
