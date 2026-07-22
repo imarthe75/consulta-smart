@@ -3,6 +3,7 @@ import api from '../services/api'
 import ModuleBanner from '../components/ModuleBanner'
 import PromptRegressionPanel from '../components/admin/PromptRegressionPanel'
 import LLMObservabilityPanel from '../components/admin/LLMObservabilityPanel'
+import ProfileAuditLogPanel from '../components/admin/ProfileAuditLogPanel'
 import { 
     Save, RefreshCw, ToggleLeft, ToggleRight, Settings, FileText, CheckCircle2, 
     AlertTriangle, Eye, Sparkles, Plus, Trash2, Layers, Upload, Image,
@@ -225,6 +226,22 @@ export default function AdminPage() {
 
     const handleSaveConfig = async (e) => {
         e.preventDefault()
+
+        // El tema 'general' es de solo lectura (plantilla base / referencia canónica):
+        // el backend rechaza cualquier UPDATE sobre él (ver admin.py::save_chatbot_profile).
+        // En vez de dejar que el guardado falle, se precarga el modal de "Nuevo Tema" con
+        // la configuración ya editada, para que el usuario solo tenga que elegir un id y
+        // nombre nuevos, sin perder los cambios que ya hizo.
+        if (config.id === 'general') {
+            setNewProfile({ ...config, id: '', name: '' })
+            setShowNewProfileForm(true)
+            setMessage({
+                type: 'info',
+                text: 'El tema "general" es de solo lectura. Asigna un identificador y nombre para guardar esta configuración como un tema nuevo.'
+            })
+            return
+        }
+
         setSaving(true)
         setMessage(null)
         try {
@@ -401,9 +418,9 @@ export default function AdminPage() {
     const ActiveIcon = ICON_MAP[config.icon] || Bot
 
     return (
-        <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-950 transition-colors">
+        <div className="flex-1 p-6 bg-slate-50 dark:bg-slate-950 transition-colors">
             <div className="max-w-6xl mx-auto space-y-6">
-                
+
                 <ModuleBanner
                     badgeIcon={Settings}
                     badgeLabel="Panel de Administración RAG Multitenant"
@@ -440,9 +457,11 @@ export default function AdminPage() {
                 {/* Notifications */}
                 {message && (
                     <div className={`p-4 rounded-xl flex items-center justify-between border ${
-                        message.type === 'success' 
+                        message.type === 'success'
                             ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-400'
-                            : 'bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-400'
+                            : message.type === 'info'
+                                ? 'bg-[var(--cs-info-bg)] border-blue-200 dark:border-blue-900 text-[var(--cs-info)]'
+                                : 'bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-400'
                     }`}>
                         <div className="flex items-center gap-3">
                             {message.type === 'success' ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
@@ -1386,6 +1405,12 @@ export default function AdminPage() {
                             </div>
                         </div>
 
+                        {/* Historial de cambios del tema activo (CMMI CM) */}
+                        <ProfileAuditLogPanel profileId={selectedProfileId} onRestored={fetchData} />
+
+                        {/* Batería de Regresión de Prompts del tema activo */}
+                        <PromptRegressionPanel profileId={selectedProfileId} />
+
                     </div>
 
                     {/* Column 3: Sandbox / Probador de Chat en Vivo */}
@@ -1504,9 +1529,6 @@ export default function AdminPage() {
                     </div>
 
                 </div>
-
-                {/* Batería de Regresión de Prompts del tema activo */}
-                <PromptRegressionPanel profileId={selectedProfileId} />
                 </>
                 )}
 
