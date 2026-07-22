@@ -35,8 +35,8 @@ export default function LoginPage() {
                             <div className="absolute -inset-2 border border-blue-500/30 rounded-full animate-spin-slow pointer-events-none"></div>
                         </div>
                     </div>
-                    <h1 className="text-3xl font-heading font-bold text-white mb-2 tracking-tight">ConsultaRPP</h1>
-                    <p className="text-blue-400 font-bold text-xs tracking-[0.2em] uppercase">SISTEMA INTELIGENTE DE CONSULTAS LEGALES</p>
+                    <h1 className="text-3xl font-heading font-bold text-white mb-2 tracking-tight">Consulta Smart</h1>
+                    <p className="text-blue-400 font-bold text-xs tracking-[0.2em] uppercase">SISTEMA INTELIGENTE DE CONSULTAS Y ASESORÍA</p>
                 </div>
 
                 <button

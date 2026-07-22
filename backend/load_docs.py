@@ -6,15 +6,16 @@ Script robusto para cargar documentos de expertos (2026) en la BD
 import sys
 import asyncio
 from pathlib import Path
-from uuid6 import uuid7
+import uuid
 
 # Añadir backend al path
 sys.path.insert(0, str(Path(__file__).parent))
 
+from sqlalchemy import text
 from app.core.database import init_db, close_db, get_session_factory
 from app.infrastructure.repositories.document_repository import PostgresDocumentRepository
 from app.infrastructure.repositories.vector_store import PostgresVectorStore
-from app.infrastructure.external.llm_service import get_llm_provider
+from app.infrastructure.external.llm_service import get_local_embedding_service
 from app.domain.entities.document import Document, DocumentCategory
 from app.core.logger import logger, setup_logging
 
@@ -26,7 +27,7 @@ async def load_documents():
     
     await init_db()
     session_factory = get_session_factory()
-    embedding_service = get_llm_provider()
+    embedding_service = get_local_embedding_service()
     
     docs_dir = Path(__file__).parent / "docs"
     files_to_load = list(docs_dir.rglob("*.md"))
@@ -41,6 +42,11 @@ async def load_documents():
         doc_repo = PostgresDocumentRepository(session)
         vector_store = PostgresVectorStore(session)
         
+        # Obtener un usuario real existente
+        user_result = await session.execute(text("SELECT id FROM users LIMIT 1"))
+        first_user = user_result.scalar_one_or_none()
+        valid_user_id = first_user if first_user else "00000000-0000-0000-0000-000000000000"
+
         for idx, file_path in enumerate(files_to_load, 1):
             try:
                 logger.info(f"[{idx}/{len(files_to_load)}] 📄 Procesando: {file_path.name}")
@@ -55,7 +61,7 @@ async def load_documents():
                 document = Document(
                     title=file_path.stem,
                     category=DocumentCategory.PROCEDIMIENTO,
-                    user_id="019d73a6-d320-7c49-bee7-b19f368473ec", # usuario_demo
+                    user_id=valid_user_id,
                     file_type="md"
                 )
                 
@@ -76,7 +82,7 @@ async def load_documents():
                 for chunk_idx, chunk_text in enumerate(chunks_text):
                     embedding = await embedding_service.embed(chunk_text)
                     await vector_store.add(
-                        vector_id=str(uuid7()),
+                        vector_id=str(uuid.uuid4()),
                         text_content=chunk_text,
                         embedding=embedding,
                         metadata={

@@ -1,10 +1,36 @@
-@import "tailwindcss";
+/* El @import de la fuente debe ir ANTES de @import "tailwindcss": Tailwind v4 expande
+   su propio @import en miles de líneas de utilidades al compilar, y eso empuja
+   cualquier @import posterior más allá de la posición "primero en el archivo" que
+   exige la especificación CSS (Vite lo reportaba como advertencia de build). */
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap');
+@import "tailwindcss";
 
+/* ─────────────────────────────────────────────────────────────
+   Sistema de diseño — Tokens de marca y semánticos
+   Referencia: Informe CA-CS-A-01 — Prioridad #4
+   ───────────────────────────────────────────────────────────── */
 @theme {
-  --color-primary: #1a3a5c;
+  /* Marca corporativa */
+  --color-primary:   #1a3a5c;
   --color-secondary: #142e4a;
-  --color-accent: rgba(26, 58, 92, 0.16);
+  --color-accent:    rgba(26, 58, 92, 0.16);
+
+  /* ── Tokens semánticos (estado) ─────────────────────────── */
+  /* Éxito / indexado / activo */
+  --color-success:       #0f8f5f;
+  --color-success-light: #e3f5ec;
+
+  /* Advertencia / pendiente / parcial */
+  --color-warning:       #a56a08;
+  --color-warning-light: #fbf1de;
+
+  /* Error / fallido / peligro */
+  --color-danger:        #b23a3a;
+  --color-danger-light:  #fbe9e9;
+
+  /* Información / neutro-azul */
+  --color-info:          #2563a8;
+  --color-info-light:    #e8f0fa;
 }
 
 :root {
@@ -12,11 +38,77 @@
   --radius-atom: 8px;
   --radius-organism: 14px;
   --height-btn-base: 44px;
+
+  /* Variantes de modo claro (explícitas para acceso desde JS/CSS sin Tailwind) */
+  --cs-success:       #0f8f5f;
+  --cs-success-bg:    #e3f5ec;
+  --cs-warning:       #a56a08;
+  --cs-warning-bg:    #fbf1de;
+  --cs-danger:        #b23a3a;
+  --cs-danger-bg:     #fbe9e9;
+  --cs-info:          #2563a8;
+  --cs-info-bg:       #e8f0fa;
+}
+
+/* Variantes dark — se aplican dentro de .dark o prefers-color-scheme */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cs-success:    #4fd699;
+    --cs-success-bg: #0f2a20;
+    --cs-warning:    #e0ad4f;
+    --cs-warning-bg: #2c220e;
+    --cs-danger:     #e77b7b;
+    --cs-danger-bg:  #2c1414;
+    --cs-info:       #7fb2e8;
+    --cs-info-bg:    #132437;
+  }
+}
+
+.dark {
+  --cs-success:    #4fd699;
+  --cs-success-bg: #0f2a20;
+  --cs-warning:    #e0ad4f;
+  --cs-warning-bg: #2c220e;
+  --cs-danger:     #e77b7b;
+  --cs-danger-bg:  #2c1414;
+  --cs-info:       #7fb2e8;
+  --cs-info-bg:    #132437;
 }
 
 @layer base {
   body {
     @apply bg-slate-50 text-slate-900;
     font-family: 'DM Sans', sans-serif;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Utilidades semánticas reutilizables
+   Uso: <span class="cs-chip cs-chip--success">Indexado</span>
+   ───────────────────────────────────────────────────────────── */
+@layer components {
+  /* Chip de estado genérico */
+  .cs-chip {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border;
+  }
+  .cs-chip--success {
+    background-color: var(--cs-success-bg);
+    color: var(--cs-success);
+    border-color: color-mix(in srgb, var(--cs-success) 35%, transparent);
+  }
+  .cs-chip--warning {
+    background-color: var(--cs-warning-bg);
+    color: var(--cs-warning);
+    border-color: color-mix(in srgb, var(--cs-warning) 35%, transparent);
+  }
+  .cs-chip--danger {
+    background-color: var(--cs-danger-bg);
+    color: var(--cs-danger);
+    border-color: color-mix(in srgb, var(--cs-danger) 35%, transparent);
+  }
+  .cs-chip--info {
+    background-color: var(--cs-info-bg);
+    color: var(--cs-info);
+    border-color: color-mix(in srgb, var(--cs-info) 35%, transparent);
   }
 }

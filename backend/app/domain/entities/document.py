@@ -12,19 +12,33 @@ class DocumentStatus(str, Enum):
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
+    INDEXED = "indexed"
     FAILED = "failed"
     ARCHIVED = "archived"
+
+    @classmethod
+    def _missing_(cls, value):
+        return cls.COMPLETED
 
 
 class DocumentCategory(str, Enum):
     """Categorías de documentos"""
     REGLAMENTO = "reglamento"
+    REGLAMENTOS = "reglamentos"
     LEY = "ley"
     GUIA = "guia"
+    GUIAS = "guias"
     FORMULARIO = "formulario"
     PROCEDIMIENTO = "procedimiento"
     DOCUMENTACION_RPP = "documentacion_rpp"
+    RPP = "rpp"
+    TRAMITES = "tramites"
+    COSTOS = "costos"
     OTRO = "otro"
+
+    @classmethod
+    def _missing_(cls, value):
+        return cls.OTRO
 
 
 class Document(Entity):

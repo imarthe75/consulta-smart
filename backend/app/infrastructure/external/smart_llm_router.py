@@ -1,6 +1,9 @@
 """
-Smart LLM Router - Multi-provider com fallback automático
-Similar a idp-smart, pero con APIs gratuitas
+Smart LLM Router — Enrutador Inteligente Multiproveedor con Fallback Automático.
+
+Orquesta las llamadas a modelos de lenguaje (Groq Llama 3, GCP Vertex/Gemini, NVIDIA NIM Cloud, Ollama),
+evaluando disponibilidad en tiempo real, límites de tasa (rate limits) y degradación de latencia.
+Soporta personalización de proveedor, clave API y modelo por perfil/tenant.
 """
 
 from typing import List, Optional, Dict, Any, Tuple
@@ -14,8 +17,34 @@ from app.infrastructure.external.local_embedding_service import LocalEmbeddingSe
 logger = logging.getLogger(__name__)
 
 
+class _OpenAICompatibleProvider:
+    """Adaptador mínimo para 'openai' como proveedor personalizado por tema.
+
+    No existe un OpenAIProvider dedicado en llm_service.py; se reutiliza el mismo
+    cliente `AsyncOpenAI` que ya usa NvidiaNimProvider (API compatible con OpenAI),
+    apuntando al endpoint real de OpenAI en vez del de NVIDIA NIM.
+    """
+
+    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
+        from openai import AsyncOpenAI
+        self.client = AsyncOpenAI(api_key=api_key)
+        self.chat_model = model
+
+    async def chat(self, messages: List[dict], temperature: float = 0.7, max_tokens: int = 1024, **kwargs) -> str:
+        response = await self.client.chat.completions.create(
+            model=self.chat_model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        return response.choices[0].message.content
+
+    async def embed(self, text: str) -> List[float]:
+        return await LocalEmbeddingService().embed(text)
+
+
 class ProviderStatus(Enum):
-    """Estado de disponibilidad de cada proveedor"""
+    """Estado de disponibilidad operativa de cada proveedor de IA."""
     AVAILABLE = "available"
     DEGRADED = "degraded"
     UNAVAILABLE = "unavailable"
@@ -24,22 +53,39 @@ class ProviderStatus(Enum):
 
 class SmartLLMRouter:
     """
-    Router inteligente que elige el mejor proveedor según:
-    1. Disponibilidad (rate limits, errores)
-    2. Latencia
-    3. Confiabilidad histórica
+    Orquestador multimodelo que selecciona dinámicamente el mejor proveedor disponible:
+    1. Disponibilidad (conteo de errores y bloqueos por Rate Limit).
+    2. Prioridad de proveedores (Vertex AI -> NVIDIA NIM -> Groq -> Gemini -> Local/Ollama).
+    3. Soporte para anulaciones (overrides) personalizadas por tema/tenant.
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        custom_provider: Optional[str] = None,
+        custom_api_key: Optional[str] = None,
+        custom_model: Optional[str] = None,
+    ):
+        """
+        Args:
+            custom_provider: si se da (y no es 'default'), el router se restringe a
+                UN solo proveedor específico para este tema/tenant, en vez de la
+                cascada global de fallback. Valores soportados: 'groq', 'gemini',
+                'nvidia', 'openai'. 'vertex'/'ollama' no soportan override de API key
+                simple (Vertex usa credenciales de proyecto GCP; Ollama es local) y
+                lanzan ValueError explícito — el llamador (chat_service.py) captura
+                esto y hace fallback al router global, en vez de fallar en silencio.
+            custom_api_key: API key específica del tema para el proveedor custom.
+            custom_model: nombre de modelo específico del tema (si el proveedor lo soporta).
+        """
         self.providers = {
             "vertex": None,
             "nvidia": None,
             "groq": None,
             "gemini": None,
         }
-        
+
         self.embeddings_service = LocalEmbeddingService()
-        
+
         # Estado de cada proveedor
         self.provider_status: Dict[str, Dict[str, Any]] = {
             "vertex": {
@@ -71,7 +117,11 @@ class SmartLLMRouter:
                 "rate_limit_until": None,
             },
         }
-        
+
+        if custom_provider and custom_provider.lower() != "default":
+            self._init_custom_provider(custom_provider.lower(), custom_api_key, custom_model)
+            return
+
         # Preferencias de routing: Prioridad dinámica según .env
         preferred = settings.LLM_PROVIDER.lower() if hasattr(settings, 'LLM_PROVIDER') else "vertex"
         if preferred not in self.providers:
@@ -80,8 +130,54 @@ class SmartLLMRouter:
         others = [name for name in self.providers.keys() if name != preferred]
         self.priority_order: List[str] = [preferred] + others
         logger.info(f"🚦 SmartRouter: Prioridad establecida en {self.priority_order}")
-        
+
         self._initialize_providers()
+
+    def _init_custom_provider(self, provider_name: str, api_key: Optional[str], model: Optional[str]):
+        """Configura el router en modo 'un solo proveedor' con credenciales personalizadas por tema."""
+        from app.infrastructure.external.llm_service import GroqProvider, GeminiProvider, NvidiaNimProvider
+
+        if provider_name == "groq":
+            if not api_key:
+                raise ValueError("custom_provider='groq' requiere custom_api_key")
+            instance = GroqProvider(api_key=api_key)
+            if model:
+                instance.chat_model = model
+        elif provider_name == "gemini":
+            if not api_key:
+                raise ValueError("custom_provider='gemini' requiere custom_api_key")
+            instance = GeminiProvider(api_key=api_key)
+            if model:
+                instance.model_name = model
+        elif provider_name == "nvidia":
+            if not api_key:
+                raise ValueError("custom_provider='nvidia' requiere custom_api_key")
+            instance = NvidiaNimProvider(api_key=api_key)
+            if model:
+                instance.chat_model = model
+        elif provider_name == "openai":
+            if not api_key:
+                raise ValueError("custom_provider='openai' requiere custom_api_key")
+            instance = _OpenAICompatibleProvider(api_key=api_key, model=model or "gpt-4o-mini")
+        else:
+            raise ValueError(
+                f"custom_provider='{provider_name}' no soportado para override por tema "
+                f"(solo 'groq', 'gemini', 'nvidia', 'openai'; 'vertex' requiere credenciales "
+                f"de proyecto GCP y 'ollama' es un motor local, ninguno acepta una API key simple)."
+            )
+
+        self.providers = {provider_name: instance}
+        self.provider_status = {
+            provider_name: {
+                "status": ProviderStatus.AVAILABLE,
+                "last_error": None,
+                "error_count": 0,
+                "success_count": 0,
+                "rate_limit_until": None,
+            }
+        }
+        self.priority_order = [provider_name]
+        logger.info(f"🎯 SmartRouter en modo proveedor personalizado por tema: {provider_name}")
     
     def _initialize_providers(self):
         """Inicializa proveedores disponibles"""
@@ -169,7 +265,41 @@ class SmartLLMRouter:
         provider_name = self._get_best_provider()
         
         if not provider_name:
-            raise Exception("No LLM providers available. Please configure at least one.")
+            logger.warning("⚠️ Sin proveedores de API externa configurados. Generando System Prompt estructurado dinámicamente con plantilla determinista CRAFT.")
+            topic = kwargs.get("topic", "Sistema de Atención y Consultas")
+            target = kwargs.get("target_audience", "Usuarios y Clientes")
+            org = kwargs.get("organization", "Institución / Organización")
+            sec = kwargs.get("sector", "Público / Privado")
+            
+            prompt_text = (
+                f"Eres el **Consultor e Integrador Experto del {topic}** en **{org}** ({sec}).\n\n"
+                f"<contexto>\n"
+                f"Operas como el asistente inteligente oficial de {org}. Tu objetivo es brindar orientación precisa, confiable y oportuna a **{target}** sobre todos los procesos, requisitos, módulos y normativas asociadas a '{topic}'. Responde siempre priorizando la base de datos RAG de manuales y reglamentos indexados.\n"
+                f"</contexto>\n\n"
+                f"<rol>\n"
+                f"Actúa como Especialista Senior de Atención y Soporte Técnico/Operativo de {org}, con trato empático, riguroso y altamente estructurado.\n"
+                f"</rol>\n\n"
+                f"<instrucciones>\n"
+                f"1. Analiza la consulta de {target} identificando el trámite o procedimiento exacto.\n"
+                f"2. Explica paso a paso los requisitos, fechas clave, canales de atención y documentación requerida.\n"
+                f"3. Si la información proviene de los manuales RAG indexados, cita los apartados o guías oficiales correspondientes.\n"
+                f"4. En caso de dudas complejas, orienta al usuario hacia las instancias presenciales o ventanillas digitales de {org}.\n"
+                f"</instrucciones>\n\n"
+                f"<formato>\n"
+                f"- Utiliza encabezados Markdown claros (`###`), listas con viñetas y negritas para resaltar conceptos clave.\n"
+                f"- Mantén respuestas ejecutivas sin bloques densos de texto.\n"
+                f"</formato>\n\n"
+                f"<reglas>\n"
+                f"- **Cero Alucinaciones:** Responde estrictamente dentro del alcance de '{topic}' y la normativa de {org}.\n"
+                f"- **Filtro de Dominio:** Si el usuario realiza preguntas ajenas a {topic}, declina amablemente aclarando el propósito oficial del bot.\n"
+                f"- **Tono:** Profesional, respetuoso y adaptado para **{target}**.\n"
+                f"</reglas>\n\n"
+                f"<ejemplos>\n"
+                f"**Pregunta:** ¿Cuáles son los requisitos y procedimientos principales para '{topic}'?\n"
+                f"**Respuesta:** Con gusto le oriento. Para realizar su gestión en **{org}**, los requisitos principales son: 1) Registro de expediente oficial, 2) Documentación comprobatoria vigente, 3) Verificación en portal institucional.\n"
+                f"</ejemplos>"
+            )
+            return prompt_text, "fallback_offline"
         
         # Intentar con el proveedor seleccionado
         for attempt in range(len(self.priority_order)):

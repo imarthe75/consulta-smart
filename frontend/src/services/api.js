@@ -14,7 +14,7 @@ const getApiBaseUrl = () => {
     }
 
     // Fallback para producción usando el path relativo esperado en el gateway
-    return '/consultarpp/api/v1/';
+    return '/api/v1/';
 }
 
 const API_BASE_URL = getApiBaseUrl()
@@ -66,6 +66,9 @@ export const authAPI = {
     getProfile: () =>
         api.get('auth/profile'),
 
+    me: () =>
+        api.get('auth/me'),
+
     guestLogin: () =>
         api.post('auth/guest'),
 }
@@ -109,11 +112,12 @@ export const chatAPI = {
     deleteSession: (sessionId) =>
         api.delete(`chat/sessions/${sessionId}`),
 
-    sendQuery: (sessionId, query, documentIds = []) =>
+    sendQuery: (sessionId, query, documentIds = [], filters = null) =>
         api.post('chat/query', {
             session_id: sessionId,
             message: query,
             document_ids: documentIds,
+            filters: filters,
         }),
 }
 

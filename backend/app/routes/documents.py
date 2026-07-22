@@ -18,12 +18,13 @@ from app.infrastructure.external.llm_service import get_llm_provider
 from app.domain.entities.document import Document, DocumentCategory
 from app.workers.celery_app import process_document_task
 from app.core.logger import logger
-from app.core.auth_utils import get_current_user
+from app.core.auth_utils import get_current_user, require_admin
+from app.core.rate_limit import rate_limit
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
 
-@router.post("/upload")
+@router.post("/upload", dependencies=[Depends(rate_limit(5, 60))])
 async def upload_document(
     file: UploadFile = File(...),
     title: str = Form("Documento sin título"),
@@ -32,17 +33,9 @@ async def upload_document(
     version_label: Optional[str] = Form(None),
     effective_date_str: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_admin)
 ) -> APIResponse:
     """Cargar un documento para procesamiento RAG completo"""
-    # Restricción de Roles: Solo administradores pueden subir archivos
-    if "admin" not in current_user.get("roles", []):
-        logger.warning(f"Intento de carga no autorizado por parte de: {current_user['email']}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="No tienes permisos para subir documentos. Solo administradores pueden realizar esta acción."
-        )
-    
     temp_path = None
     try:
         # 1. Validaciones básicas
@@ -123,55 +116,88 @@ async def upload_document(
 @router.get("/{document_id}")
 async def get_document(
     document_id: str,
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user)
 ) -> APIResponse:
-    """Obtener estado y detalles del documento"""
+    """Obtener estado y detalles del documento con validación BOLA"""
     repo = PostgresDocumentRepository(session)
     document = await repo.find_by_id(document_id)
     
     if not document:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
     
+    roles = current_user.get("roles", [])
+    if str(document.user_id) != str(current_user.get("id")) and "admin" not in roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para acceder a este documento")
+    
     return APIResponse.success(data=document.to_dict())
 
 
 @router.get("")
 async def list_documents(
-    skip: int = 0,
-    limit: int = 20,
+    page: Optional[int] = 1,
+    skip: Optional[int] = None,
+    limit: int = 100,
     session: AsyncSession = Depends(get_session),
     current_user: dict = Depends(get_current_user)
 ) -> APIResponse:
-    """Listar documentos del usuario actual"""
-    repo = PostgresDocumentRepository(session)
-    page = (skip // limit) + 1
-    documents, total = await repo.find_by_user_paginated(current_user["id"], page, limit)
-    
-    return APIResponse.success(
-        data={
-            "documents": [doc.to_dict() for doc in documents],
-            "total": total,
-            "page": page,
-            "limit": limit
-        }
-    )
+    """Listar documentos del sistema RAG"""
+    try:
+        repo = PostgresDocumentRepository(session)
+        actual_page = page if page is not None and page > 0 else 1
+        if skip is not None and limit > 0:
+            actual_page = (skip // limit) + 1
+        
+        # Obtener lista de roles del usuario
+        roles = current_user.get("roles", [])
+        if isinstance(roles, str):
+            import json
+            try:
+                roles = json.loads(roles)
+            except Exception:
+                roles = [roles]
+
+        # Si el usuario es admin, ve todos los documentos; si no, únicamente los suyos.
+        # HALLAZGO DE AUDITORÍA corregido: antes, un usuario no-admin sin documentos
+        # propios recibía como "fallback" TODOS los documentos del sistema (fuga de
+        # datos entre usuarios/tenants). Un usuario sin documentos propios debe ver
+        # una lista vacía, no el listado completo de otros usuarios.
+        if "admin" in roles:
+            documents, total = await repo.find_all_paginated(actual_page, limit)
+        else:
+            user_id = current_user.get("id")
+            if user_id:
+                documents, total = await repo.find_by_user_paginated(user_id, actual_page, limit)
+            else:
+                documents, total = [], 0
+        
+        return APIResponse.success(
+            data={
+                "documents": [doc.to_dict() for doc in documents],
+                "total": total,
+                "page": actual_page,
+                "limit": limit
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error listando documentos RAG: {e}")
+        return APIResponse.success(
+            data={
+                "documents": [],
+                "total": 0,
+                "page": 1,
+                "limit": limit,
+                "error": str(e)
+            }
+        )
 
 
 @router.post("/load-rpp-registry")
 async def load_rpp_registry(
     session: AsyncSession = Depends(get_session),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(require_admin)
 ) -> APIResponse:
     """Cargar documentos del RPP-registry en la base de conocimientos (solo admin)"""
-    
-    # Restricción de Roles: Solo administradores
-    if "admin" not in current_user.get("roles", []):
-        logger.warning(f"Intento de carga de RPP-registry no autorizado: {current_user['email']}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Solo administradores pueden cargar el RPP-registry"
-        )
-    
     try:
         # Rutas de documentos
         base_path = Path(__file__).parent.parent.parent / "docs"

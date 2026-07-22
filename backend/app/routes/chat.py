@@ -1,4 +1,10 @@
-# Rutas del Chatbot para ConsultaRPP
+"""
+Rutas del API REST para la interacción con el Chatbot Inteligente (RAG).
+
+Proporciona los endpoints de gestión de sesiones de conversación, procesamiento
+de consultas en lenguaje natural con recuperación contextual, registro de feedback (👍/👎),
+y consulta pública de metadatos de perfiles/tenants.
+"""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +17,7 @@ from app.application.dtos.common_dtos import ChatQueryDTO
 from app.application.services.chat_service import get_chat_service
 from app.core.logger import logger
 from app.core.auth_utils import get_current_user
+from app.core.rate_limit import rate_limit
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
@@ -115,7 +122,7 @@ async def list_user_sessions(
         logger.error(f"Error listando sesiones: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/query")
+@router.post("/query", dependencies=[Depends(rate_limit(30, 60))])
 async def chat_query(
     query: ChatQueryDTO,
     db_session: AsyncSession = Depends(get_session),
@@ -153,11 +160,11 @@ async def chat_query(
         # Recuperar sesión existente o crear si no existe
         existing_session = await session_repo.find_by_id(query.session_id)
         if not existing_session:
-            logger.warning(f"⚠️ Sesión {query.session_id} no encontrada, creando nueva...")
+            logger.info(f"✨ Creando sesión al vuelo para primera consulta: {query.session_id}")
             new_session = ChatSession(
                 id=query.session_id,
                 user_id=str(current_user["id"]),
-                title=query.message[:100] or "Nueva conversación"
+                title=query.message[:80] if query.message else "Consulta Widget"
             )
             await session_repo.create(new_session)
         
@@ -253,9 +260,12 @@ async def chat_query(
                 # Historial completo de la sesión
                 "conversation_history": [
                     {
+                        "id": getattr(msg, 'id', None),
                         "role": msg.role if hasattr(msg, 'role') else 'user',
                         "content": msg.content if hasattr(msg, 'content') else '',
-                        "timestamp": msg.created_at.isoformat() if hasattr(msg, 'created_at') and msg.created_at else None
+                        "timestamp": msg.created_at.isoformat() if hasattr(msg, 'created_at') and msg.created_at else None,
+                        "feedback_rating": getattr(msg, 'feedback_rating', None),
+                        "feedback_text": getattr(msg, 'feedback_text', None)
                     }
                     for msg in (updated_messages or [])
                 ],
@@ -362,6 +372,82 @@ async def delete_session(
         logger.error(f"Error eliminando sesión {session_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+class FeedbackRequest(BaseModel):
+    rating: str  # 'up' o 'down'
+    comment: Optional[str] = None
+
+@router.post("/messages/{message_id}/feedback")
+async def record_message_feedback(
+    message_id: str,
+    request: FeedbackRequest,
+    db_session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user)
+):
+    """Guarda la retroalimentación del usuario final (👍/👎) para un mensaje del asistente."""
+    try:
+        from app.infrastructure.models import ChatMessageModel, ChatSessionModel
+        from sqlalchemy import select
+        result = await db_session.execute(
+            select(ChatMessageModel)
+            .join(ChatSessionModel, ChatMessageModel.session_id == ChatSessionModel.id)
+            .where(
+                ChatMessageModel.id == message_id,
+                ChatSessionModel.user_id == str(current_user["id"])
+            )
+        )
+        msg = result.scalars().first()
+        if not msg:
+            # No se distingue "no existe" de "no te pertenece": ambos casos deben
+            # verse iguales desde afuera (evita filtrar si un ID de otro usuario es válido).
+            raise HTTPException(status_code=404, detail="Mensaje no encontrado")
+
+        if msg.role != 'assistant':
+            raise HTTPException(status_code=400, detail="Solo se puede calificar una respuesta del asistente")
+
+        if request.rating not in ('up', 'down'):
+            raise HTTPException(status_code=400, detail="rating debe ser 'up' o 'down'")
+
+        msg.feedback_rating = request.rating
+        if request.comment:
+            msg.feedback_text = request.comment
+            
+        await db_session.commit()
+        logger.info(f"👍👎 Feedback '{request.rating}' registrado para mensaje {message_id}")
+        return {"status": "success", "message": "Feedback registrado correctamente"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error registrando feedback para mensaje {message_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/health")
 async def chat_health():
     return {"status": "ok", "service": "chat"}
+
+@router.get("/profiles/{profile_id}")
+async def get_chatbot_profile_public(profile_id: str, db_session: AsyncSession = Depends(get_session)):
+    from app.infrastructure.models import ChatbotProfile
+    from sqlalchemy import select
+    result = await db_session.execute(select(ChatbotProfile).where(ChatbotProfile.id == profile_id))
+    profile = result.scalars().first()
+    if not profile:
+        return {
+            "id": profile_id,
+            "name": f"Chatbot {profile_id}",
+            "title": f"Asistente {profile_id.upper()}",
+            "subtitle": "",
+            "logo_url": "",
+            "icon": "Bot",
+            "welcome_message": "¡Hola! ¿En qué puedo apoyarle hoy?",
+            "primary_color": "#3b82f6"
+        }
+    return {
+        "id": profile.id,
+        "name": profile.name,
+        "title": profile.title or profile.name,
+        "subtitle": profile.subtitle or "",
+        "logo_url": profile.logo_url or "",
+        "icon": profile.icon or "Bot",
+        "welcome_message": profile.welcome_message or "¡Hola! ¿En qué puedo apoyarle hoy?",
+        "primary_color": profile.primary_color or "#004a87"
+    }
