@@ -69,7 +69,11 @@ class PostgresVectorStore(VectorStore):
                 if 'is_active' in filters:
                     stmt = stmt.where(DocumentModel.is_active == filters['is_active'])
                 if 'category' in filters:
-                    stmt = stmt.where(DocumentModel.category == filters['category'])
+                    cat_val = filters['category']
+                    if isinstance(cat_val, list):
+                        stmt = stmt.where(DocumentModel.category.in_(cat_val))
+                    else:
+                        stmt = stmt.where(DocumentModel.category.in_([cat_val, 'general']))
                 if 'version_label' in filters:
                     stmt = stmt.where(DocumentModel.version_label == filters['version_label'])
                 if 'group_id' in filters:

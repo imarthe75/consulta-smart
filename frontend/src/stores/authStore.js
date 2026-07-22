@@ -17,7 +17,27 @@ export const useAuthStore = create((set) => ({
 
     login: (user, token) => {
         localStorage.setItem('token', token)
-        set({ isAuthenticated: true, user, token })
+        // Rol provisional ('user') hasta resolver el rol real contra el backend.
+        set({ isAuthenticated: true, user: { ...user, role: user?.role || 'user' }, token })
+
+        // El rol real SIEMPRE se resuelve consultando al backend (tabla `users`,
+        // fuente de verdad), nunca adivinando por substring en email/username del
+        // perfil OIDC. Ver hallazgo de auditoría: aquí existía un backdoor de
+        // escalación de privilegios que otorgaba 'admin' a cualquier cuenta cuyo
+        // email/username contuviera ciertas substrings — fue eliminado.
+        import('../services/api').then(({ authAPI }) => {
+            authAPI.me()
+                .then((res) => {
+                    const roles = res.data?.roles || []
+                    set((state) => ({
+                        user: { ...state.user, role: roles.includes('admin') ? 'admin' : 'user' }
+                    }))
+                })
+                .catch(() => {
+                    // Si falla la resolución de rol, se conserva el rol provisional 'user'
+                    // (fail-closed: nunca se asume admin por defecto).
+                })
+        })
     },
 
     logout: () => {

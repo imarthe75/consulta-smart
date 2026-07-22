@@ -11,7 +11,7 @@ services:
     environment:
     - APP_ENV=${APP_ENV:-development}
     - APP_DEBUG=${APP_DEBUG:-true}
-    - DB_HOST=casmarts-core-db-primary
+    - DB_HOST=10.4.3.208
     - DB_PORT=5432
     - DB_USER=${DB_USER:-consultarpp_user}
     - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
@@ -39,6 +39,10 @@ services:
     networks:
     - aura-network
     - consulta-smart-network
+    extra_hosts:
+    - "auth.casmart.internal:10.4.3.208"
+    - "casmarts-core-authentik-server:10.4.3.208"
+    - "casmarts-core-db-primary:10.4.3.23"
     deploy:
       resources:
         limits:
@@ -53,7 +57,7 @@ services:
     - .env
     environment:
     - APP_ENV=${APP_ENV:-development}
-    - DB_HOST=casmarts-core-db-primary
+    - DB_HOST=10.4.3.208
     - DB_PORT=5432
     - DB_USER=${DB_USER:-consultarpp_user}
     - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}
@@ -93,7 +97,7 @@ services:
     - .env
     environment:
     - APP_ENV=${APP_ENV:-development}
-    - DB_HOST=casmarts-core-db-primary
+    - DB_HOST=10.4.3.208
     - DB_PORT=5432
     - DB_USER=${DB_USER:-consultarpp_user}
     - DB_PASSWORD=${DB_PASSWORD:-SuperSecure_ConsultaRPP_2026!}

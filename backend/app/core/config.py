@@ -118,6 +118,15 @@ class Settings(BaseSettings):
     DEMO_USER_PASSWORD: str = os.getenv("DEMO_USER_PASSWORD", "password123")
     DEMO_USER_USERNAME: str = os.getenv("DEMO_USER_USERNAME", "usuario_demo")
 
+    # Widget Guest Login (usuario técnico dedicado para el widget embebible público)
+    # HALLAZGO DE AUDITORÍA: estas credenciales vivían como literales en auth.py,
+    # visibles en el repo/historial de git. Se mueven a configuración; el valor por
+    # defecto preserva el que ya está hasheado en la BD para no romper el widget en
+    # producción, pero DEBE rotarse (nueva contraseña + nuevo hash en BD + WIDGET_PASSWORD
+    # vía Vault/env) ya que el valor actual quedó expuesto en el historial del repositorio.
+    WIDGET_EMAIL: str = os.getenv("WIDGET_EMAIL", "widget@casmarts.com")
+    WIDGET_PASSWORD: str = os.getenv("WIDGET_PASSWORD", "casmarts_widget_2026")
+
     # Authentik / OIDC (Centralizada en Core)
     AUTHENTIK_INTERNAL_URL: str = os.getenv("AUTHENTIK_INTERNAL_URL", "http://casmarts-core-authentik-server:9000")
     
@@ -129,6 +138,14 @@ class Settings(BaseSettings):
 # Initialize settings and override with Vault if possible
 settings = Settings()
 
+# HALLAZGO DE AUDITORÍA corregido: si Vault falla o no devuelve los secretos críticos,
+# el código anterior seguía arrancando con los fallbacks hardcodeados de arriba
+# (DB_PASSWORD/SECRET_KEY/JWT_SECRET), que son predecibles y están en el repo. En
+# producción eso es inaceptable: es preferible que el proceso no arranque a que
+# arranque con credenciales públicas conocidas. En desarrollo (APP_ENV != "production")
+# se conserva el comportamiento anterior para no romper el flujo local.
+_REQUIRED_VAULT_KEYS = ("SECRET_KEY", "JWT_SECRET", "DB_PASSWORD")
+
 try:
     from app.core.vault import vault_client
     vault_secrets = vault_client.get_secrets()
@@ -139,8 +156,26 @@ try:
         if "DB_PASSWORD" in vault_secrets: settings.DB_PASSWORD = vault_secrets["DB_PASSWORD"]
         if "GOOGLE_API_KEY" in vault_secrets: settings.GOOGLE_API_KEY = vault_secrets["GOOGLE_API_KEY"]
         if "GROQ_API_KEY" in vault_secrets: settings.GROQ_API_KEY = vault_secrets["GROQ_API_KEY"]
+        if "WIDGET_PASSWORD" in vault_secrets: settings.WIDGET_PASSWORD = vault_secrets["WIDGET_PASSWORD"]
         print(f"🔒 Config loaded from Vault for {settings.APP_NAME}")
+        missing = [k for k in _REQUIRED_VAULT_KEYS if k not in vault_secrets]
+        if missing and settings.APP_ENV == "production":
+            raise RuntimeError(
+                f"Vault respondió pero no incluyó los secretos requeridos {missing} "
+                f"en un entorno de producción. Abortando arranque."
+            )
+    elif settings.APP_ENV == "production":
+        raise RuntimeError(
+            "Vault no devolvió ningún secreto en un entorno de producción. "
+            "Abortando arranque para evitar usar las credenciales por defecto "
+            "(predecibles y presentes en el repositorio)."
+        )
 except Exception as e:
     print(f"⚠️ Vault integration skipped: {e}")
+    if settings.APP_ENV == "production":
+        raise RuntimeError(
+            "No se pudieron cargar los secretos desde Vault en producción. "
+            "Abortando arranque para evitar usar credenciales por defecto inseguras."
+        ) from e
 
 CORS_ORIGINS = settings.CORS_ORIGINS

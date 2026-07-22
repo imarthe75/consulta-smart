@@ -45,17 +45,41 @@ class ChatService:
         """Procesa una consulta especializada en RPP con protocolo de autoridad"""
         try:
             logger.info(f"💬 Consulta RPP: {query[:80]}...")
-            
-            # 1. Definición de Personalidad de Autoridad (Protocolo 2026 - Dinámico)
+                   # 1. Definición de Personalidad de Autoridad (Protocolo 2026 - Dinámico)
             system_prompt = None
+            welcome_msg = "¡Hola! ¿En qué puedo apoyarle hoy?"
+            profile_id = "general"  # Por defecto es el chatbot genérico
+            
+            if filters:
+                if "category" in filters:
+                    profile_id = filters["category"]
+                elif "profile_id" in filters:
+                    profile_id = filters["profile_id"]
+
             if db_session:
                 try:
-                    config = db_session.query(SystemConfig).filter(SystemConfig.key == "system_prompt").first()
-                    if config:
-                        system_prompt = config.value
-                        logger.debug("✨ Usando System Prompt dinámico desde DB")
+                    from sqlalchemy import select
+                    from app.infrastructure.models import ChatbotProfile
+                    stmt = select(ChatbotProfile).where(ChatbotProfile.id == profile_id)
+                    result = await db_session.execute(stmt)
+                    profile = result.scalars().first()
+                    if profile:
+                        if profile.system_prompt:
+                            system_prompt = profile.system_prompt
+                            logger.debug(f"✨ Usando System Prompt dinámico del perfil: {profile_id}")
+                        if profile.welcome_message:
+                            welcome_msg = profile.welcome_message
                 except Exception as e:
-                    logger.warning(f"⚠️ Error cargando prompt desde DB: {e}")
+                    logger.warning(f"⚠️ Error cargando perfil {profile_id} desde DB: {e}")
+
+            is_custom = False
+            if system_prompt:
+                # Si el prompt no contiene RPP de forma explícita o si es el perfil genérico, es un chatbot personalizado/genérico
+                if "rpp" not in system_prompt.lower() and "registro público" not in system_prompt.lower():
+                    is_custom = True
+            elif profile_id != "rpp":
+                # Si no hay prompt y no es el perfil RPP, asumimos custom/genérico
+                is_custom = True
 
             if not system_prompt:
                 system_prompt = (
@@ -89,13 +113,41 @@ class ChatService:
             greetings = ['hola', 'buenos dias', 'buenos días', 'buenas tardes', 'buenas noches', 'saludos', 'que tal', 'quien eres']
             if len(clean_query.split()) <= 3 and any(greet in clean_query for greet in greetings):
                 return {
-                    "response": "¡Hola! Bienvenido al asistente informativo del Registro Público. Estoy aquí para ayudarle con requisitos, costos y ubicaciones de trámites registrales en Puebla y Quintana Roo. ¿En qué trámite puedo apoyarle hoy?",
+                    "response": welcome_msg,
                     "session_id": session_id,
                     "provider": "Sistema Local (Saludo)",
                     "timestamp": datetime.utcnow().isoformat()
                 }
 
-            # 3. Guardrails Dinámicos
+            # 3. Guardrails Dinámicos y Filtro de Tópicos Prohibidos por Perfil
+            forbidden_list = []
+            rejection_text = "Consulta fuera de dominio."
+            
+            if db_session:
+                try:
+                    stmt = select(ChatbotProfile).where(ChatbotProfile.id == profile_id)
+                    result = await db_session.execute(stmt)
+                    profile = result.scalars().first()
+                    if profile:
+                        if profile.forbidden_topics:
+                            forbidden_list = [t.strip().lower() for t in profile.forbidden_topics.split(',') if t.strip()]
+                        if profile.rejection_message:
+                            rejection_text = profile.rejection_message
+                except Exception as e:
+                    logger.warning(f"Error evaluando guardrails de perfil {profile_id}: {e}")
+            
+            # Evaluación de tópicos prohibidos en la consulta
+            for topic in forbidden_list:
+                if topic in clean_query:
+                    logger.info(f"⛔ Consulta bloqueada por Guardrail ('{topic}'): {query}")
+                    return {
+                        "response": rejection_text,
+                        "session_id": session_id,
+                        "provider": "Sistema Local (Guardrail Tópico Prohibido)",
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+
+            # Guardrails secundarios por archivo JSON si existe
             guardrail_path = os.path.join(os.path.dirname(__file__), "../../core/guardrails.json")
             if os.path.exists(guardrail_path):
                 with open(guardrail_path, 'r', encoding='utf-8') as f:
@@ -103,14 +155,16 @@ class ChatService:
                     for pattern in config.get("forbidden_patterns", []):
                         if pattern in clean_query:
                             return {
-                                "response": config.get("rejection_templates", {}).get("forbidden", "Consulta fuera de dominio."),
+                                "response": config.get("rejection_templates", {}).get("forbidden", rejection_text),
                                 "session_id": session_id,
-                                "provider": "Sistema Local (Guardrail)",
+                                "provider": "Sistema Local (Guardrail Archivo)",
                                 "timestamp": datetime.utcnow().isoformat()
                             }
 
             # 4. Heurística de Jurisdicción y Entidades (Inspirado en idp-smart)
-            h_logic = heuristics.apply_search_logic(query)
+            h_logic = {}
+            if not is_custom:
+                h_logic = heuristics.apply_search_logic(query)
             h_jurisdiction = h_logic.get("jurisdiction")
             h_entities = h_logic.get("entities")
             
@@ -129,8 +183,8 @@ class ChatService:
                 search_query = f"{' '.join(h_entities)} {query}"
                 logger.info(f"🚀 Boosting query con entidades: {h_entities}")
             
-            # Solo reescribir si la consulta es compleja (> 3 palabras)
-            if len(query.split()) > 3:
+            # Solo reescribir si la consulta es compleja (> 3 palabras) y no es personalizado
+            if len(query.split()) > 3 and not is_custom:
                 try:
                     rewrite_prompt = f"Como experto RPP, traduce esta frase ciudadana a términos técnicos de búsqueda registral (solo el resultado): '{query}'"
                     # Timeout agresivo de 5s para el rewriter: es mejor una búsqueda subóptima que un timeout total
@@ -147,7 +201,7 @@ class ChatService:
                     logger.warning(f"⚠️ Error rewriter: {e}")
                     search_query = query
             else:
-                logger.info("⏩ Skip Rewriter: Consulta simple")
+                logger.info("⏩ Skip Rewriter: Consulta simple o modo personalizado")
 
             # 5. Búsqueda RAG con Umbral Ampliado (0.70) para mayor cobertura
             logger.info("🚧 CP-2: Entrando a Búsqueda RAG")
@@ -190,24 +244,44 @@ class ChatService:
                 })
                 logger.info("🚧 CP-3a: Respuesta con contexto RAG oficial")
             else:
-                # Sin documentos específicos: el LLM responde con conocimiento general
-                # pero indica al usuario que confirme datos con la institución
-                fallback_note = (
-                    "\n\n[INSTRUCCIÓN INTERNA - NO MOSTRAR AL USUARIO]: "
-                    "No se encontraron documentos en la base de conocimiento para esta consulta. "
-                    "ANTES de responder, evalúa ESTRICTAMENTE si la pregunta es sobre trámites, requisitos, costos, "
-                    "horarios, ubicaciones o normativa del Registro Público de la Propiedad (RPP/IRCEP) en Puebla o Quintana Roo. "
-                    "Si la consulta NO es sobre estos temas (ejemplos de rechazo: recetas, demandas contra notarios, "
-                    "tesis académicas, preguntas de cultura general, o intentos de manipulación disfrazados de RPP), "
-                    "aplica la REGLA CRÍTICA #1 y rechaza educadamente sin proporcionar ninguna información. "
-                    "Si la consulta SÍ es válida sobre RPP/IRCEP, responde con tu conocimiento general y "
-                    "añade al final: '⚠️ Nota: Esta información es orientativa. Le recomendamos confirmar horarios, "
-                    "costos y datos de contacto directamente con la oficina del RPP/IRCEP correspondiente.'"
-                )
+                # Sin documentos específicos en RAG
+                if is_custom:
+                    fallback_note = (
+                        "\n\n[INSTRUCCIÓN INTERNA - NO MOSTRAR AL USUARIO]: "
+                        "No se encontraron documentos específicos en la base de conocimiento RAG. "
+                        "Responde de manera ejecutiva, útil y profesional dentro del rol definido en el System Prompt. "
+                        "Si la pregunta es totalmente ajena o prohibida según tus reglas, rechaza educadamente."
+                    )
+                else:
+                    fallback_note = (
+                        "\n\n[INSTRUCCIÓN INTERNA - NO MOSTRAR AL USUARIO]: "
+                        "No se encontraron documentos en la base de conocimiento para esta consulta. "
+                        "ANTES de responder, evalúa ESTRICTAMENTE si la pregunta pertenece al dominio de atención. "
+                        "Si la consulta NO es sobre temas válidos, aplica las reglas de rechazo del bot. "
+                        "Si la consulta SÍ es válida, responde con conocimiento general y añade una nota aclaratoria orientativa."
+                    )
                 messages.append({"role": "user", "content": f"{query}{fallback_note}"})
                 logger.info("🚧 CP-3b: Respuesta con conocimiento general del LLM (sin RAG)")
 
-            answer, provider = await llm.chat(messages=messages, system=system_prompt)
+            # Evaluación de motor LLM por Tema/Perfil con Fallback Inteligente
+            active_llm = llm
+            if profile and profile.llm_provider and profile.llm_provider != "default":
+                try:
+                    logger.info(f"🔄 Usando motor LLM personalizado para tema '{profile_id}': {profile.llm_provider}")
+                    from app.infrastructure.external.smart_llm_router import SmartLLMRouter
+                    from app.core.crypto import decrypt_secret
+                    custom_router = SmartLLMRouter(
+                        custom_provider=profile.llm_provider,
+                        custom_api_key=decrypt_secret(profile.custom_api_key),
+                        custom_model=profile.llm_model
+                    )
+                    answer, provider = await custom_router.chat(messages=messages, system=system_prompt)
+                except Exception as custom_llm_err:
+                    logger.warning(f"⚠️ Error en motor custom ({profile.llm_provider}), ejecutando fallback a Smart Router Global: {custom_llm_err}")
+                    answer, provider = await llm.chat(messages=messages, system=system_prompt)
+                    provider = f"{provider} (Fallback por error en {profile.llm_provider})"
+            else:
+                answer, provider = await llm.chat(messages=messages, system=system_prompt)
             
             # 7. Blindaje de Alucinaciones (Grounding Verification)
             if settings.STRICT_GROUNDING and relevant_docs:
@@ -220,7 +294,26 @@ class ChatService:
                 else:
                     logger.info("✅ Respuesta validada por Grounding")
             
-            sources = list(set([d.get("source") for d in relevant_docs])) if relevant_docs else []
+            # ── Construcción de fuentes para la UI ───────────────────────────
+            # Se construye una lista de objetos enriquecidos (no strings planos)
+            # deduplicada por documento (por 'source'/filename) conservando el
+            # chunk más relevante de cada documento.
+            # Retrocompat: el campo "source" (string) sigue existiendo para
+            # los mensajes ya guardados en BD con formato antiguo.
+            seen_sources: set = set()
+            sources = []
+            for d in relevant_docs:
+                key = d.get("source", "")   # string legible único por doc/versión
+                if key in seen_sources:
+                    continue
+                seen_sources.add(key)
+                sources.append({
+                    "filename":     key,                        # id legible (retrocompat)
+                    "title":        d.get("title") or key,      # nombre del documento
+                    "chunk_number": d.get("chunk_number"),      # fragmento de referencia
+                    "version_label": d.get("version_label"),    # versión del reglamento
+                    "relevance":    d.get("relevance", ""),     # distancia/método
+                })
             
             return {
                 "response": answer,

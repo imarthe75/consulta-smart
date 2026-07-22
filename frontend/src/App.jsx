@@ -9,6 +9,8 @@ import LoginPage from './pages/LoginPage'
 import WidgetPage from './pages/WidgetPage'
 import DocumentsPage from './pages/DocumentsPage'
 import ResultsPage from './pages/ResultsPage'
+import AdminPage from './pages/AdminPage'
+
 
 const baseUrl = window.location.origin + import.meta.env.BASE_URL
 const oidcConfig = {
@@ -32,6 +34,9 @@ const oidcConfig = {
     }
 }
 
+
+import WidgetIntegrationPage from './pages/WidgetIntegrationPage'
+import DocumentationPage from './pages/DocumentationPage'
 
 function ProtectedRoute({ children }) {
     const auth = useAuth()
@@ -76,12 +81,16 @@ function AppContent() {
                 path="/*"
                 element={
                     <ProtectedRoute>
-                        <div className="h-screen w-full bg-white">
-                            <main className="h-full w-full overflow-hidden">
+                        <div className="h-screen w-full bg-white flex">
+                            <Navigation />
+                            <main className="flex-1 h-full overflow-y-auto">
                                 <Routes>
                                     <Route path="/" element={<ChatPage />} />
                                     <Route path="/documentos" element={<DocumentsPage />} />
+                                    <Route path="/guia-widget" element={<WidgetIntegrationPage />} />
+                                    <Route path="/documentacion" element={<DocumentationPage />} />
                                     <Route path="/resultados" element={<ResultsPage />} />
+                                    <Route path="/admin" element={<AdminPage />} />
                                 </Routes>
                             </main>
                         </div>
@@ -95,7 +104,13 @@ function AppContent() {
 export default function App() {
     return (
         <AuthProvider {...oidcConfig}>
-            <BrowserRouter basename={import.meta.env.BASE_URL}>
+            <BrowserRouter 
+                basename={import.meta.env.BASE_URL}
+                future={{
+                    v7_startTransition: true,
+                    v7_relativeSplatPath: true,
+                }}
+            >
                 <AppContent />
             </BrowserRouter>
         </AuthProvider>

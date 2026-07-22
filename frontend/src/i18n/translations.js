@@ -19,7 +19,7 @@ export const es = {
         chat: 'Chat',
         documents: 'Documentos',
         search: 'Búsqueda',
-        consultarpp: 'ConsultaRPP',
+        consultarpp: 'Consulta Smart',
         description: 'Sistema de Consultas Legales',
     },
 

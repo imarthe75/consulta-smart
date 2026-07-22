@@ -34,9 +34,23 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Caché Híbrida inicializada (Redis + embeddings)")
     except Exception as e:
         logger.warning(f"⚠️  No se pudo inicializar caché: {e}. El sistema funcionará sin caché.")
+
+    # ========== INICIAR MONITOR AUTOMÁTICO DE ARCHIVOS ==========
+    watcher_task = None
+    try:
+        from app.infrastructure.auto_ingest_service import start_watcher
+        watcher_task = asyncio.create_task(start_watcher())
+        logger.info("✅ Monitor de carpeta auto_ingest_service iniciado")
+    except Exception as e:
+        logger.error(f"❌ Error al iniciar el monitor de carpeta: {e}")
     
     yield
     
+    # ========== CANCELAR TAREAS EN SEGUNDO PLANO ==========
+    if watcher_task:
+        watcher_task.cancel()
+        logger.info("✅ Monitor de carpeta cancelado")
+
     logger.info(f"Deteniendo {settings.APP_NAME}")
     
     # ========== LIMPIAR RECURSOS ==========

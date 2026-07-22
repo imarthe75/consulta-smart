@@ -5,10 +5,25 @@ from typing import Optional
 from app.core.database import get_session
 from app.core.logger import logger
 from app.core.config import settings
-from app.core.auth_utils import create_access_token, verify_password
+from app.core.auth_utils import create_access_token, verify_password, get_current_user
 from app.infrastructure.repositories.user_repository import PostgresUserRepository
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+
+@router.get("/me")
+async def get_me(current_user: dict = Depends(get_current_user)) -> dict:
+    """
+    Devuelve la identidad y el rol REAL del usuario autenticado, resueltos por el
+    backend (fuente de verdad: tabla `users`) contra el JWT validado.
+
+    Se agrega este endpoint porque el frontend determinaba el rol adivinando por
+    substring en el email/username del perfil OIDC (hallazgo de auditoría,
+    backdoor de escalación de privilegios) — ese atajo se eliminó y este es el
+    reemplazo legítimo: el propio usuario consulta su rol real tras iniciar sesión.
+    """
+    return current_user
+
 
 @router.get("/guest")
 @router.post("/guest")
@@ -20,13 +35,10 @@ async def guest_login(
     Autentica al usuario widget dedicado contra la BD local para no exponer OIDC en el chat público.
     """
     try:
-        WIDGET_EMAIL = "widget@casmarts.com"
-        WIDGET_PASSWORD = "casmarts_widget_2026"
-        
         user_repo = PostgresUserRepository(db)
-        user = await user_repo.find_by_email(WIDGET_EMAIL)
-        
-        if not user or not user.password_hash or not verify_password(WIDGET_PASSWORD, user.password_hash):
+        user = await user_repo.find_by_email(settings.WIDGET_EMAIL)
+
+        if not user or not user.password_hash or not verify_password(settings.WIDGET_PASSWORD, user.password_hash):
             logger.error("Widget user authentication failed - user not found or password mismatch")
             raise HTTPException(status_code=500, detail="Error de autenticación del widget")
         
@@ -43,11 +55,11 @@ async def guest_login(
         logger.info("Widget guest login exitoso")
         
         return {
-            "access_token": access_token, 
+            "access_token": access_token,
             "token_type": "bearer",
             "expires_in": settings.JWT_EXPIRATION_HOURS * 3600,
             "user_id": str(user.id),
-            "email": WIDGET_EMAIL,
+            "email": settings.WIDGET_EMAIL,
             "role": "user"
         }
     except HTTPException:

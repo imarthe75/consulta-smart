@@ -1,6 +1,6 @@
 # Modelos ORM de Base de Datos (SQLAlchemy)
 
-from sqlalchemy import Column, String, Integer, DateTime, Boolean, Text, JSON, Enum, ForeignKey, Index, Computed
+from sqlalchemy import Column, String, Integer, Float, DateTime, Boolean, Text, JSON, Enum, ForeignKey, Index, Computed
 from sqlalchemy.orm import relationship, synonym
 from datetime import datetime
 from uuid6 import uuid7
@@ -141,6 +141,8 @@ class ChatMessageModel(Base):
     role = Column(String(20), nullable=False)  # user, assistant, system
     content = Column(Text, nullable=False)
     sources = Column(JSON, default=[])
+    feedback_rating = Column(String(10), nullable=True)  # 'up', 'down' o None
+    feedback_text = Column(Text, nullable=True)
     tokens_used = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
@@ -162,6 +164,45 @@ class SystemConfigModel(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ChatbotProfileModel(Base):
+    """ORM Model para perfiles/temas del chatbot"""
+    __tablename__ = "chatbot_profiles"
+
+    id = Column(String(50), primary_key=True)  # e.g., 'default', 'rpp', 'catastro'
+    name = Column(String(255), nullable=False)
+    system_prompt = Column(Text, nullable=True)
+    welcome_message = Column(String(255), nullable=True)
+    title = Column(String(255), nullable=True)
+    subtitle = Column(String(255), nullable=True)
+    logo_url = Column(String(500), nullable=True)
+    icon = Column(String(50), nullable=True, default="Bot")
+    primary_color = Column(String(50), nullable=True, default="#004a87")
+    strictness_level = Column(String(50), nullable=True, default="strict") # strict (Solo RAG), hybrid (RAG + Apoyo Web)
+    strictness_score = Column(Integer, nullable=True, default=80) # Slider 0-100% de rigidez RAG
+    temperature = Column(Float, nullable=True, default=0.1) # Creatividad / Determinismo del LLM
+    top_p = Column(Float, nullable=True, default=0.9)
+    forbidden_topics = Column(Text, nullable=True, default="deportes, futbol, cine, cocina, politica, chismes, entretenimiento")
+    rejection_message = Column(Text, nullable=True, default="Mi función está limitada exclusivamente a la asesoría sobre trámites, normativa y servicios del Registro Público. No puedo asistirle con temas ajenos.")
+    llm_provider = Column(String(50), nullable=True, default="default")  # 'default', 'groq', 'openai', 'gemini', 'nvidia', 'ollama'
+    llm_model = Column(String(100), nullable=True)     # e.g., 'llama3-70b-8192', 'gpt-4o', 'gemini-1.5-pro'
+    custom_api_key = Column(String(255), nullable=True) # API key enmascarada / personalizada por tema
+    config_metadata = Column(JSON, default={}) # Almacenamiento optimizado de configuraciones complejas en formato JSON
+    is_active = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PromptTestCaseModel(Base):
+    """ORM Model para casos de prueba de regresión de System Prompts por perfil/tenant"""
+    __tablename__ = "prompt_test_cases"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid7()))
+    profile_id = Column(String(50), ForeignKey("chatbot_profiles.id"), nullable=False, index=True)
+    query = Column(Text, nullable=False)
+    expected_keywords = Column(JSON, default=[])  # Lista de términos/requisitos esperados en la respuesta
+    description = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 User = UserModel
 Document = DocumentModel
 DocumentChunk = DocumentChunkModel
@@ -169,5 +210,12 @@ VectorEmbedding = VectorEmbeddingModel
 ChatSession = ChatSessionModel
 ChatMessage = ChatMessageModel
 SystemConfig = SystemConfigModel
+ChatbotProfile = ChatbotProfileModel
+PromptTestCase = PromptTestCaseModel
 
-__all__ = ["User","Document","DocumentChunk","VectorEmbedding","ChatSession","ChatMessage","SystemConfig","UserModel","DocumentModel","DocumentChunkModel","VectorEmbeddingModel","ChatSessionModel","ChatMessageModel","SystemConfigModel"]
+__all__ = [
+    "User", "Document", "DocumentChunk", "VectorEmbedding", "ChatSession", "ChatMessage",
+    "SystemConfig", "ChatbotProfile", "PromptTestCase",
+    "UserModel", "DocumentModel", "DocumentChunkModel", "VectorEmbeddingModel",
+    "ChatSessionModel", "ChatMessageModel", "SystemConfigModel", "ChatbotProfileModel", "PromptTestCaseModel"
+]

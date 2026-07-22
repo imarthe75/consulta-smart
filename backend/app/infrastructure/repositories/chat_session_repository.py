@@ -191,6 +191,7 @@ class PostgresChatSessionRepository(ChatSessionRepository):
             
             self.session.add(message_model)
             await self.session.flush()
+            message.id = message_model.id
             
             logger.info(f"Message added to session {session_id}")
             return True
@@ -252,5 +253,8 @@ class PostgresChatSessionRepository(ChatSessionRepository):
             sources=model.sources or [],
             tokens_used=model.tokens_used
         )
+        message.id = model.id
         message.created_at = model.created_at
+        message.feedback_rating = getattr(model, 'feedback_rating', None)
+        message.feedback_text = getattr(model, 'feedback_text', None)
         return message

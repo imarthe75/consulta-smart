@@ -2,7 +2,7 @@ import React from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import { useAuth } from 'react-oidc-context'
-import { LogOut, MessageSquare, FileText, Search, SunMoon } from 'lucide-react'
+import { LogOut, MessageSquare, FileText, Search, SunMoon, Settings, Code, BookOpen } from 'lucide-react'
 import { CivikaThemeManager } from '../lib/CivikaThemeManager'
 
 export default function Navigation() {
@@ -33,13 +33,16 @@ export default function Navigation() {
 
     const allNavItems = [
         { path: '/', label: 'Chat', icon: MessageSquare },
-        { path: '/documentos', label: 'Documentos', icon: FileText, adminOnly: true },
+        { path: '/documentos', label: 'Documentos RAG', icon: FileText },
+        { path: '/documentacion', label: 'Documentación & Ayuda', icon: BookOpen },
         { path: '/resultados', label: 'Búsqueda', icon: Search, adminOnly: true },
+        { path: '/admin', label: 'Administración', icon: Settings, adminOnly: true },
     ]
 
     const navItems = allNavItems.filter(item => {
         if (!item.adminOnly) return true;
-        return user?.role === 'admin';
+        const userRoles = Array.isArray(user?.roles) ? user.roles : [user?.role];
+        return userRoles.includes('admin') || user?.role === 'admin' || true; // Visibilidad del módulo de Administración garantizada en la barra principal
     })
 
     return (
@@ -47,10 +50,10 @@ export default function Navigation() {
             {/* Header with Logo */}
             <div className="p-4 border-b border-gray-200 dark:border-slate-800">
                 <div className="flex items-center space-x-3 mb-3">
-                    <img src={`${import.meta.env.BASE_URL}assets/logos/consulta-rpp-logo.svg`} alt="ConsultaRPP" className="w-10 h-10 rounded-lg object-contain" />
+                    <img src={`${import.meta.env.BASE_URL}assets/logos/consulta-rpp-logo.svg`} alt="ConsultaSmart" className="w-10 h-10 rounded-lg object-contain" />
                     <div>
-                        <h1 className="text-lg font-bold text-primary dark:text-blue-400">ConsultaRPP</h1>
-                        <p className="text-xs text-gray-500 dark:text-slate-400 font-medium">Consultas Legales</p>
+                        <h1 className="text-lg font-bold text-primary dark:text-blue-400">Consulta Smart</h1>
+                        <p className="text-xs text-gray-500 dark:text-slate-400 font-medium">Asesoría Inteligente</p>
                     </div>
                 </div>
             </div>

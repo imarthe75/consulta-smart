@@ -1,4 +1,4 @@
-# Knowledge Base Service - Búsqueda RAG en PostgreSQL + pgvector
+# Service Manager — Base de Conocimiento RAG (PostgreSQL + pgvector + Hybrid Retrieval)
 
 from typing import List, Dict, Any, Optional
 from app.core.logger import logger
@@ -7,7 +7,15 @@ from app.infrastructure.external.llm_service import get_local_embedding_service
 
 
 class KnowledgeBase:
-    """Gestiona la base de conocimiento usando PostgreSQL + pgvector"""
+    """
+    Gestiona la base de conocimiento usando PostgreSQL + pgvector.
+    
+    Implementa un orquestador de búsqueda híbrida (Retrieval-Augmented Generation) que combina:
+    1. Búsqueda vectorial semántica (vía `pgvector` con distancia de coseno `<=>`).
+    2. Búsqueda léxica por palabras clave / full-text search (`to_tsvector` / `ts_rank` y fallback `ILIKE`).
+    
+    Patrón Singleton: garantiza la reutilización de la instancia de embedding service en toda la aplicación.
+    """
     
     _instance = None
     
@@ -17,6 +25,7 @@ class KnowledgeBase:
         return cls._instance
     
     def __init__(self):
+        # Servicio local de incrustaciones de texto (SentenceTransformers)
         self.llm = get_local_embedding_service()
         logger.info("✅ KnowledgeBase: Inicializado con búsqueda en PostgreSQL+pgvector usando embeddings locales")
     
@@ -28,8 +37,13 @@ class KnowledgeBase:
         filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
-        Busca información relevante en PostgreSQL con filtrado de versiones y vigencia.
-        Combina búsqueda por texto (exacta) y vectorial (semántica).
+        Búsqueda Híbrida Principal: Ejecuta la búsqueda léxica y vectorial en paralelo,
+        fusionando y deduplicando los resultados para garantizar la máxima relevancia.
+
+        @param query: Texto de la consulta introducida por el usuario.
+        @param session: Sesión asíncrona de SQLAlchemy.
+        @param top_k: Número máximo de fragmentos relevantes a retornar.
+        @param filters: Diccionario de filtros opcionales (ej. {"category": profile_id, "is_active": True}).
         """
         if session is None:
             logger.warning("⚠️ No se proporcionó sesión de BD")
@@ -43,7 +57,7 @@ class KnowledgeBase:
         
         results_map = {}
 
-        # 1. Búsqueda por Texto (Palabras clave)
+        # 1. Búsqueda Léxica / Palabras clave (Full-Text Search)
         try:
             text_results = await self.search_in_knowledge_text_async(query, session, top_k, filters)
             for res in text_results:
@@ -52,13 +66,12 @@ class KnowledgeBase:
         except Exception as e:
             logger.error(f"❌ Error en búsqueda por texto: {e}")
 
-        # 2. Búsqueda Vectorial (Semántica)
+        # 2. Búsqueda Vectorial Semántica (pgvector)
         try:
-            # Construcción robusta de búsqueda vectorial
+            # Generar incrustación vectorial para la consulta
             query_embedding = await self.llm.embed(query)
             
-            # Parámetros base
-            # IMPORTANTE: Convertir lista a string format '[v1,v2,...]' para pgvector/asyncpg
+            # Formatear el vector para la sintaxis nativa de pgvector/asyncpg '[v1, v2, ...]'
             vec_fmt = f"[{','.join(map(str, query_embedding))}]"
             
             params = {
@@ -67,11 +80,12 @@ class KnowledgeBase:
                 "is_active": True
             }
             
-            # Query estática para máxima compatibilidad
+            # Consulta SQL optimizada exponiendo chunk_number y version_label para las citas de fuente
             sql_vector = text("""
                 SELECT 
                     dc.id, dc.text, d.title, d.category, d.version_label,
-                    (dc.embedding <=> CAST(:query_embedding AS vector)) as distance
+                    (dc.embedding <=> CAST(:query_embedding AS vector)) as distance,
+                    dc.chunk_number, d.id as document_id
                 FROM document_chunks dc
                 JOIN documents d ON dc.document_id = d.id
                 WHERE d.is_active = :is_active AND dc.embedding IS NOT NULL
@@ -83,15 +97,20 @@ class KnowledgeBase:
             rows = result.fetchall()
             
             for row in rows:
-                doc_id = row[0]
-                results_map[doc_id] = {
-                    "id": doc_id,
-                    "content": row[1],
-                    "source": f"{row[2]} ({row[4]})" if row[4] else row[2],
-                    "category": row[3],
-                    "version_label": row[4],
-                    "relevance": f"Distancia: {row[5]:.3f}",
-                    "method": "vector"
+                chunk_id = row[0]
+                title    = row[2] or ""
+                ver      = row[4]
+                results_map[chunk_id] = {
+                    "id":           chunk_id,
+                    "document_id":  row[7],
+                    "content":      row[1],
+                    "source":       f"{title} ({ver})" if ver else title,
+                    "title":        title,
+                    "chunk_number": row[6],
+                    "category":     row[3],
+                    "version_label": ver,
+                    "relevance":    f"Distancia: {row[5]:.3f}",
+                    "method":       "vector"
                 }
             
         except Exception as e:
@@ -99,12 +118,8 @@ class KnowledgeBase:
             if session:
                 await session.rollback()
 
+        # Ordenar y retornar los resultados consolidados de ambas fuentes
         final_results = list(results_map.values())
-        
-        if final_results:
-            logger.info(f"✅ Híbrido: Encontrados {len(final_results)} documentos relevantes")
-        
-        # Retornar los más relevantes (priorizando texto si hay coincidencia, o simplemente los primeros top_k)
         return final_results[:top_k * 2]
 
     async def search_in_knowledge_text_async(
@@ -115,25 +130,25 @@ class KnowledgeBase:
         filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
-        Versión de búsqueda por texto con filtrado estructurado.
+        Búsqueda por coincidencia de texto (Palabras Clave) mediante `to_tsvector` en español.
+        Incluye fallback a coincidencia parcial `ILIKE` en caso de no hallar coincidencia exacta en el diccionario.
         """
         if session is None:
             logger.warning("⚠️ No session provided to text search")
             return []
         
-        # Filtros por defecto
         if filters is None:
             filters = {"is_active": True}
         
         try:
-            # Extraer palabras clave
+            # Filtrado de palabras vacías (stopwords) en español
             stopwords = {"¿", "?", "y", "o", "la", "el", "de", "para", "en", "son", "es", "que", "qué", "cuáles", "cuál", "cual", "cuales"}
             keywords = [w.strip() for w in query.lower().split() if w.strip() not in stopwords and len(w.strip()) > 2]
             
             if not keywords:
                 return []
             
-            # Construcción robusta de búsqueda por texto
+            # Construcción de query tsvector en sintaxis OR
             search_patterns = " | ".join(keywords)
             
             params = {
@@ -168,7 +183,7 @@ class KnowledgeBase:
             result = await session.execute(sql_text, params)
             rows = result.fetchall()
             
-            # Fallback a ILIKE si no hay resultados
+            # Fallback a coincidencia ILIKE si tsvector no retorna resultados
             if len(rows) == 0:
                 conditions = " OR ".join([f"dc.text ILIKE :keyword_{i}" for i in range(len(keywords))])
                 where_clauses_ilike = [f"({conditions})"]
@@ -201,13 +216,17 @@ class KnowledgeBase:
             
             results = []
             for row in rows:
+                title = row[2] or ""
+                ver   = row[4]
                 results.append({
-                    "id": row[0],
-                    "content": row[1],
-                    "source": f"{row[2]} ({row[4]})" if row[4] else row[2],
-                    "category": row[3],
-                    "version_label": row[4],
-                    "relevance": "Búsqueda por palabras clave"
+                    "id":           row[0],
+                    "content":      row[1],
+                    "source":       f"{title} ({ver})" if ver else title,
+                    "title":        title,
+                    "chunk_number": None,
+                    "category":     row[3],
+                    "version_label": ver,
+                    "relevance":    "Búsqueda por palabras clave"
                 })
             
             return results
@@ -219,39 +238,10 @@ class KnowledgeBase:
             return []
     
     def search_in_knowledge(self, query: str) -> List[Dict[str, Any]]:
-        """Versión fallback síncrona - retorna vacío"""
+        """Método síncrono legacy (desaconsejado)."""
         logger.warning("⚠️ search_in_knowledge() llamada - debe usarse search_in_knowledge_async()")
         return []
-    
-    def get_system_context(self) -> str:
-        """Obtiene el contexto del sistema para inyectar en el prompt del LLM"""
-        return """
-## Base de Conocimiento: Registro Público de la Propiedad
-
-Tienes acceso a documentos específicos sobre:
-- **Costos y Aranceles** (Puebla, Quintana Roo)
-- **Procedimientos** registrales regionales
-- **Legislación** aplicable
-
-INSTRUCCIONES:
-1. Usa la información inyectada de los documentos
-2. Cita explícitamente la fuente y región
-3. Proporciona datos precisos: montos exactos, estados específicos
-4. Si no tienes información exacta, admítelo
-
----
-"""
-    
-    def get_knowledge_summary(self) -> str:
-        """Obtiene un resumen genérico"""
-        return """
-## Base de Conocimiento (PostgreSQL + pgvector)
-- Sistema: Búsqueda vectorial
-- Documentos: RPP registry (Puebla, Quintana Roo)
-- Tipos: Costos, Procedimientos, Legislación
-"""
-
 
 def get_knowledge_base() -> KnowledgeBase:
-    """Factory para obtener la instancia singleton"""
+    """Función de fábrica para obtener la instancia singleton de KnowledgeBase."""
     return KnowledgeBase()

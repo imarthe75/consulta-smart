@@ -12,6 +12,34 @@ Base = declarative_base()
 # Engine singleton
 _engine = None
 
+# Parches idempotentes de esquema para columnas agregadas a tablas YA EXISTENTES.
+#
+# HALLAZGO DE AUDITORÍA: este proyecto no usa Alembic (aunque está en requirements.txt,
+# nunca se inicializó — no hay carpeta migrations/ ni alembic.ini). `Base.metadata.create_all`
+# solo crea tablas que no existen; nunca altera una tabla ya existente para agregarle una
+# columna nueva. Se confirmó en vivo: `chatbot_profiles.llm_provider/llm_model/custom_api_key`
+# ya estaban en la tabla real (aparentemente creada después de agregar esas columnas al
+# modelo), pero `chat_messages.feedback_rating/feedback_text` NO estaban — cualquier request
+# a /stats/llm-router o POST /chat/messages/{id}/feedback fallaba con un error real de
+# PostgreSQL (columna inexistente). Este bloque agrega, de forma segura e idempotente
+# (ADD COLUMN IF NOT EXISTS), cualquier columna nueva declarada en los modelos ORM que
+# `create_all` no pueda crear por sí solo. Si el proyecto migra a Alembic en el futuro,
+# este bloque puede retirarse.
+_SCHEMA_PATCHES = [
+    ("chat_messages", "feedback_rating", "VARCHAR(10)"),
+    ("chat_messages", "feedback_text", "TEXT"),
+]
+
+
+async def _apply_schema_patches(conn):
+    for table, column, coltype in _SCHEMA_PATCHES:
+        try:
+            await conn.execute(
+                text(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {coltype}')
+            )
+        except Exception as e:
+            logger.warning(f"No se pudo aplicar el parche de esquema {table}.{column}: {e}")
+
 
 async def init_db():
     """Initialize database connection and create tables"""
@@ -39,7 +67,11 @@ async def init_db():
         # Create all tables (separate transaction to ensure it runs)
         async with _engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        
+
+        # Agregar columnas nuevas a tablas ya existentes (ver _SCHEMA_PATCHES arriba)
+        async with _engine.begin() as conn:
+            await _apply_schema_patches(conn)
+
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")

@@ -13,7 +13,7 @@
         }
 
         static get observedAttributes() {
-            return ['primary-color', 'bot-name', 'endpoint', 'app-url'];
+            return ['primary-color', 'bot-name', 'endpoint', 'app-url', 'profile-id'];
         }
 
         connectedCallback() {
@@ -42,7 +42,13 @@
             const primaryColor = this.getAttribute('primary-color') || '#004a87';
             const botName = this.getAttribute('bot-name') || 'Consultor Experto';
             const endpoint = this.getAttribute('endpoint') || window.location.origin;
-            const appUrl = this.getAttribute('app-url') || `${endpoint}/widget`;
+            const profileId = this.getAttribute('profile-id') || 'general';
+            
+            // Si app-url no está seteada, construirla con el profile_id
+            let appUrl = this.getAttribute('app-url');
+            if (!appUrl) {
+                appUrl = `${endpoint}/widget?profile_id=${profileId}`;
+            }
 
             const style = `
                 .widget-container { position: fixed; bottom: 20px; right: 20px; z-index: 999999; display: flex; flex-direction: column; align-items: flex-end; }
