@@ -9,6 +9,28 @@ Prevención de recurrencia · Evidencia de verificación.
 
 ---
 
+## 2026-07-22 — Ningún proveedor de IA activo: el chat responde con texto genérico sin que nadie lo note
+
+**Síntoma reportado por el usuario:** "la matriz de observabilidad está incompleta, veo todos los proveedores deshabilitados".
+
+**Investigación:** se verificó primero si era un bug de visualización. Se confirmó que **no**: `settings.GROQ_API_KEY`, `GCP_PROJECT_ID`, `GOOGLE_API_KEY` y `NVIDIA_NIM_API_KEY` están efectivamente vacíos en el contenedor real. Se revisaron los logs de producción de las últimas horas: **cada respuesta de asistente registrada terminaba en el mismo texto exacto de plantilla** ("Eres el Consultor e Integrador Experto del Sistema de Atención y Consultas..."), sin relación con la pregunta real del usuario ni con el contexto RAG recuperado (que sí era correcto y variaba por consulta).
+
+**Causa raíz:** el cliente de Vault (`hvac.Client(url=..., token=...)`) se conecta sin excepción pero `client.is_authenticated()` devuelve `False` — el `VAULT_TOKEN` configurado en el contenedor no es válido contra el Vault real (`10.4.3.208:8200`). Como `GROQ_API_KEY`/`GOOGLE_API_KEY`/`NVIDIA_NIM_API_KEY` no tienen ningún valor por defecto en `docker-compose.yml` (a diferencia de `DB_PASSWORD`/`SECRET_KEY`, que sí tienen fallback), dependen **por completo** de que Vault los entregue — al fallar la autenticación, quedan vacíos silenciosamente. `SmartLLMRouter._get_best_provider()` no encuentra ningún proveedor disponible y cae al texto de respaldo determinista (pensado originalmente solo como red de seguridad para el generador de prompts del admin, pero aplicado también a cada consulta real de chat).
+
+**Por qué nadie lo notó:** el fallback está diseñado para "no truene la respuesta" — genera un texto con formato correcto y aspecto profesional, por lo que a simple vista no parece un error. El panel de Observabilidad ya existía, pero mostraba los proveedores como "deshabilitados" sin ninguna alerta que explicara la consecuencia real (que el chat no está generando respuestas reales).
+
+**Corrección aplicada (parcial — ver limitación):**
+1. Se corrigió un bug real y separado de visualización en `GET /admin/stats/llm-router`: la fila "GCP Vertex AI / Gemini" conflaba dos proveedores reales distintos (chequeaba solo `GCP_PROJECT_ID`, ignorando `GOOGLE_API_KEY` de Gemini), y existía una fila fantasma "Ollama / Local LLM" sin ningún `OllamaProvider` real en el código — corregido a 4 filas reales coincidentes con `SmartLLMRouter._initialize_providers()`.
+2. Se agregó el campo `no_llm_provider_configured` a la respuesta del endpoint, y una alerta roja explícita en `LLMObservabilityPanel.jsx` cuando los 4 proveedores están deshabilitados — explicando en lenguaje claro que el chat sigue funcionando en apariencia pero sin generar respuestas reales.
+
+**Limitación — esto NO resuelve el problema de fondo:** la causa raíz (Vault no autentica) requiere acceso administrativo real a Vault (rotar/verificar el `VAULT_TOKEN`) que está fuera del alcance de este agente. Se documenta como **R-09 en `docs/REGISTRO_DE_RIESGOS.md`, severidad Crítica, activo ahora mismo** — es el riesgo de mayor prioridad de todo el registro porque afecta la funcionalidad principal del producto en producción en este momento, no una brecha teórica.
+
+**Prevención de recurrencia:** la alerta visible en el panel de Observabilidad convierte este tipo de falla de "silenciosa e indetectable" a "visible con un vistazo al panel de administración" — la próxima vez que Vault falle (o cualquier proveedor quede sin configurar), el administrador lo verá de inmediato en vez de que se descubra por casualidad al revisar logs.
+
+**Evidencia de verificación:** `client.is_authenticated()` ejecutado contra el Vault real devuelve `False`; 3 entradas de log reales con el mismo texto de respaldo exacto en respuestas de asistente de las últimas horas; `GET /admin/stats/llm-router` ejecutado directamente tras el fix devuelve las 4 filas reales con `no_llm_provider_configured: true`.
+
+---
+
 ## 2026-07-22 — Tema "general" con System Prompt corrupto
 
 **Síntoma:** el chatbot del tema `general` empezó a responder de forma incoherente;
