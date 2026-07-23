@@ -33,6 +33,43 @@ Como `GROQ_API_KEY`/`GOOGLE_API_KEY`/`NVIDIA_NIM_API_KEY` no tienen ningún valo
 
 **Evidencia de verificación:** `client.is_authenticated()` ejecutado contra el Vault real devuelve `False`; 3 entradas de log reales con el mismo texto de respaldo exacto en respuestas de asistente de las últimas horas; `GET /admin/stats/llm-router` ejecutado directamente tras el fix devuelve las 4 filas reales con `no_llm_provider_configured: true`.
 
+**Actualización 2026-07-22/23 — stopgap aplicado (mitiga el síntoma, no la causa raíz):**
+
+El usuario aportó 4 API keys de distintos proveedores de LLM para evaluar como
+alternativa mientras se resuelve el acceso administrativo real a Vault. Cada una se
+probó con una llamada real y mínima al proveedor (nunca simulada), enmascarando el
+valor de la key en toda salida impresa:
+
+| Proveedor | Resultado | Detalle del error (sin exponer la key) |
+|---|---|---|
+| **Groq** | ✅ Funciona | Respuesta real del modelo recibida correctamente. |
+| Gemini | ❌ Falla | Error de autenticación real de la API ("API key not valid" / `INVALID_ARGUMENT`), no es un problema de cuota. |
+| NVIDIA NIM | ❌ Falla | El nombre de modelo aportado no existe (`404`); reintentado con el nombre corregido → `403 Forbidden`, confirmando que la key en sí (no solo el modelo) es inválida. |
+| OpenRouter | ❌ Falla | `401 User not found` — la key no corresponde a ninguna cuenta válida. |
+
+**Causa raíz — sigue sin resolverse:** este resultado no cambia el diagnóstico de
+arriba. Vault sigue sin un token real configurado; de las 4 alternativas evaluadas
+como bypass temporal, solo una resultó válida.
+
+**Corrección aplicada (stopgap, no la corrección de fondo):** se configuró
+`GROQ_API_KEY` directamente en `.env` (bypass de Vault únicamente para este
+proveedor) y se recreó el contenedor con `docker compose up -d --force-recreate`
+— se confirmó que `docker restart` por sí solo **no** relee `.env`/`env_file`, y
+por eso una recreación previa "exitosa" seguía sin tener la variable disponible en
+el proceso.
+
+**Evidencia de verificación post-stopgap:**
+- `GET /admin/stats/llm-router` real: `Groq Llama-3: active`, `no_llm_provider_configured: false`.
+- Prueba de extremo a extremo directa contra `SmartLLMRouter.chat()` (sin mocks, contenedor real): devolvió una respuesta genuina del modelo (`("PRUEBA-OK", "groq")`), no el texto de plantilla de respaldo.
+
+**Limitación que persiste:** el chat depende ahora de una **única** API key de un
+**único** proveedor puesta directamente en un archivo `.env`, sin la redundancia
+multi-proveedor ni la rotación centralizada que Vault estaba pensado para dar. Si
+esta key de Groq se invalida o se agota su cuota, el sistema vuelve a caer al texto
+de respaldo genérico sin ningún proveedor de respaldo real. R-09 se actualiza a
+"mitigado, no resuelto" en `docs/REGISTRO_DE_RIESGOS.md` — la corrección de fondo
+(token de Vault real) sigue pendiente y fuera del alcance de este agente.
+
 ---
 
 ## 2026-07-22 — Tema "general" con System Prompt corrupto
