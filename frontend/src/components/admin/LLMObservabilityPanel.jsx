@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import api from '../../services/api'
-import { Activity, Cpu, Server, CheckCircle2, ThumbsUp, ThumbsDown, RefreshCw, Zap, ShieldCheck } from 'lucide-react'
+import { Activity, Cpu, Server, CheckCircle2, ThumbsUp, ThumbsDown, RefreshCw, Zap, ShieldCheck, AlertTriangle } from 'lucide-react'
 
 /**
  * LLMObservabilityPanel — Componente de observabilidad operacional de IA.
@@ -62,6 +62,28 @@ export default function LLMObservabilityPanel() {
                     <RefreshCw size={16} />
                 </button>
             </div>
+
+            {/* Alerta crítica: sin ningún proveedor de IA configurado, el chat no genera
+                respuestas reales — responde con un texto de respaldo genérico que ignora
+                la pregunta y el contexto RAG recuperado. Hallazgo real (2026-07-22): esto
+                ocurría en silencio, sin ningún indicador visible para el administrador. */}
+            {metrics?.no_llm_provider_configured && (
+                <div
+                    className="p-4 rounded-xl border flex items-start gap-3"
+                    style={{ backgroundColor: 'var(--cs-danger-bg)', borderColor: 'var(--cs-danger)', color: 'var(--cs-danger)' }}
+                >
+                    <AlertTriangle size={20} className="shrink-0 mt-0.5" />
+                    <div className="text-xs">
+                        <p className="font-bold mb-1">Ningún proveedor de IA está configurado.</p>
+                        <p>
+                            El chat sigue recuperando documentos reales del RAG, pero las respuestas que se
+                            muestran al usuario son un texto genérico de respaldo que no usa el contexto ni
+                            responde a la pregunta real. Verifica las claves de API (Groq, Gemini, Vertex AI o
+                            NVIDIA NIM) o la conexión a Vault en la configuración del backend.
+                        </p>
+                    </div>
+                </div>
+            )}
 
             {/* Metricas de Resumen */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

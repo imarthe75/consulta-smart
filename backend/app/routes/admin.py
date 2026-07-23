@@ -1086,6 +1086,21 @@ async def get_llm_router_stats(
     docs_res = await db.execute(select(func.count(DocumentModel.id)))
     total_docs = docs_res.scalar() or 0
 
+    # HALLAZGO real (2026-07-22): esta lista antes conflaba "Vertex AI" (usa
+    # GCP_PROJECT_ID) y "Gemini" (usa GOOGLE_API_KEY) en una sola fila — dos
+    # proveedores reales distintos de SmartLLMRouter con dos variables de entorno
+    # independientes, mostrados como si fueran uno solo. También incluía una fila
+    # "Ollama / Local LLM" que no existe: no hay ningún OllamaProvider real en el
+    # código, solo se menciona en comentarios como opción futura. Se corrigió para
+    # reflejar exactamente los 4 proveedores reales que
+    # SmartLLMRouter._initialize_providers() intenta inicializar.
+    _llm_provider_rows = [
+        {"name": "GCP Vertex AI", "status": "active" if settings.GCP_PROJECT_ID else "disabled"},
+        {"name": "NVIDIA NIM Cloud", "status": "active" if settings.NVIDIA_NIM_API_KEY else "disabled"},
+        {"name": "Groq Llama-3", "status": "active" if settings.GROQ_API_KEY else "disabled"},
+        {"name": "Google Gemini", "status": "active" if settings.GOOGLE_API_KEY else "disabled"},
+    ]
+
     return {
         "status": "success",
         "metrics": {
@@ -1097,12 +1112,8 @@ async def get_llm_router_stats(
                 "negative": feedback_negative,
                 "satisfaction_rate_pct": round((feedback_positive / (feedback_positive + feedback_negative) * 100)) if (feedback_positive + feedback_negative) > 0 else 100
             },
-            "active_llm_providers": [
-                {"name": "Groq Llama-3 (Principal)", "status": "active" if settings.GROQ_API_KEY else "disabled"},
-                {"name": "GCP Vertex AI / Gemini", "status": "active" if settings.GCP_PROJECT_ID else "disabled"},
-                {"name": "NVIDIA NIM Cloud", "status": "active" if settings.NVIDIA_NIM_API_KEY else "disabled"},
-                {"name": "Ollama / Local LLM", "status": "fallback_standby"}
-            ],
+            "active_llm_providers": _llm_provider_rows,
+            "no_llm_provider_configured": all(p["status"] == "disabled" for p in _llm_provider_rows),
             "cache_layer": {
                 "type": "Redis + SentenceTransformers Semantic Cache",
                 "status": "operational",
