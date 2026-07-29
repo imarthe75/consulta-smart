@@ -80,9 +80,11 @@ export default function DocumentationPage() {
                                     1.2 Selección del Motor de IA y Claves Privadas por Tema
                                 </h3>
                                 <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed pl-7">
-                                    Es posible asignar un proveedor de IA específico para cada tema (ej. <strong>Groq Llama 3</strong>, <strong>GCP Vertex AI</strong>, <strong>NVIDIA NIM Cloud</strong> o <strong>Gemini</strong>) introduciendo una API Key privada.
+                                    Es posible asignar un proveedor de IA específico para cada tema — <strong>Groq</strong>, <strong>OpenAI</strong>, <strong>Anthropic</strong>, <strong>Mistral AI</strong>, <strong>Google AI Studio (Gemini)</strong>, <strong>NVIDIA NIM Cloud</strong> u <strong>Ollama</strong> (servidor local/on-premise) — introduciendo su clave de API. <strong>GCP Vertex AI</strong> no admite esta personalización por tema (requiere credenciales de proyecto, no una API key simple); solo puede activarse una vez, de forma global, en el servidor.
                                 </p>
                                 <div className="p-4 bg-slate-50 dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-800 pl-7 text-xs text-slate-600 dark:text-slate-300 space-y-1.5">
+                                    <p>• <strong>Endpoint / Base URL:</strong> obligatorio al elegir Ollama (dirección del servidor, ej. <code>http://ollama-host:11434</code>); opcional para OpenAI, NVIDIA NIM o Mistral si se usa un gateway propio.</p>
+                                    <p>• <strong>Catálogo de modelos en vivo:</strong> el botón "Cargar modelos disponibles" consulta el catálogo real del proveedor en el momento (con la clave/endpoint ya capturados), en vez de ofrecer una lista fija que puede quedar desactualizada.</p>
                                     <p>• <strong>Enmascaramiento de API Keys:</strong> Al guardar la clave en el panel, el backend la encripta y expone únicamente una máscara (`••••••••1234`) para prevenir filtraciones visuales.</p>
                                     <p>• <strong>Fallback Automático:</strong> Si el proveedor personalizado agota sus tokens o presenta latencia, el <em>Smart Router</em> conmutará sin interrupción al proveedor global de respaldo.</p>
                                 </div>
@@ -95,7 +97,7 @@ export default function DocumentationPage() {
                                     1.3 Guardrails, Estrictez y Generador Asistido de Prompts
                                 </h3>
                                 <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed pl-7">
-                                    Permite definir el grado de adherencia normativa y bloquear temas no relacionados.
+                                    Permite definir el grado de adherencia normativa y bloquear temas no relacionados. En pantalla, esta sección aparece justo debajo del System Prompt generado (no al final del formulario): los <strong>Tópicos Prohibidos</strong> se bloquean localmente por coincidencia de texto antes de invocar al modelo, y ese mismo listado se envía también al generador de prompts para quedar reflejado como instrucción explícita dentro del propio System Prompt.
                                 </p>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pl-7 text-xs">
                                     <div className="p-4 bg-white dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1">
@@ -104,7 +106,7 @@ export default function DocumentationPage() {
                                     </div>
                                     <div className="p-4 bg-white dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1">
                                         <h4 className="font-bold text-slate-800 dark:text-slate-100">Generador CRAFT / CREA / ASPECCT</h4>
-                                        <p className="text-slate-500 dark:text-slate-400">Genera automáticamente la estructura de System Prompt ideal adaptada al sector, audiencia y rol directivo.</p>
+                                        <p className="text-slate-500 dark:text-slate-400">Genera automáticamente la estructura de System Prompt ideal adaptada al sector, audiencia y rol directivo, incorporando los Tópicos Prohibidos y el Mensaje de Rechazo ya configurados.</p>
                                     </div>
                                 </div>
                             </div>

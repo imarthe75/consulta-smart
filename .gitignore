@@ -51,6 +51,10 @@ htmlcov/
 # Credenciales y Secretos (Seguridad)
 *.json
 **/credentials/*.json
+# HALLAZGO (auditoría 2026-07-29): el *.json de arriba es demasiado amplio — bloqueaba
+# también package.json/package-lock.json, que SÍ deben versionarse (no son credenciales).
+!frontend/package.json
+!frontend/package-lock.json
 .env
 .env.*
 !.env.example
@@ -117,5 +121,9 @@ temp/
 # Logs
 logs/
 *.log
-\n# GCP Credentials\nbackend/app/core/credentials/google-v-credentials.json
-*.json
+
+# GCP Credentials (línea reparada 2026-07-29: estaba literalmente rota, con "\n" como texto
+# en vez de saltos de línea reales, y seguida de un "*.json" duplicado que además deshacía
+# las excepciones de package.json de más arriba — el directorio ya está cubierto por la
+# línea 64, backend/app/core/credentials/)
+backend/app/core/credentials/google-v-credentials.json

@@ -181,13 +181,19 @@ class ChatbotProfileModel(Base):
     strictness_score = Column(Integer, nullable=True, default=80) # Slider 0-100% de rigidez RAG
     temperature = Column(Float, nullable=True, default=0.1) # Creatividad / Determinismo del LLM
     top_p = Column(Float, nullable=True, default=0.9)
-    forbidden_topics = Column(Text, nullable=True, default="deportes, futbol, cine, cocina, politica, chismes, entretenimiento")
-    rejection_message = Column(Text, nullable=True, default="Mi función está limitada exclusivamente a la asesoría sobre trámites, normativa y servicios del Registro Público. No puedo asistirle con temas ajenos.")
-    llm_provider = Column(String(50), nullable=True, default="default")  # 'default', 'groq', 'openai', 'gemini', 'nvidia', 'ollama'
+    forbidden_topics = Column(Text, nullable=True, default="deportes, futbol, cine, cocina, politica, chismes, entretenimiento, demandas legales, cultura general, tesis academicas, redaccion de documentos legales, asesoria juridica personal")
+    rejection_message = Column(Text, nullable=True, default="Mi función está limitada exclusivamente a la asesoría sobre los trámites y servicios de este tema. No puedo asistirle con temas ajenos.")
+    llm_provider = Column(String(50), nullable=True, default="default")  # 'default', 'groq', 'openai', 'anthropic', 'mistral', 'gemini', 'nvidia', 'ollama'
     llm_model = Column(String(100), nullable=True)     # e.g., 'llama3-70b-8192', 'gpt-4o', 'gemini-1.5-pro'
     custom_api_key = Column(String(255), nullable=True) # API key enmascarada / personalizada por tema
+    custom_base_url = Column(String(255), nullable=True) # Endpoint del proveedor (obligatorio para 'ollama'; opcional para proxies/gateways propios de otros proveedores OpenAI-compatibles)
     config_metadata = Column(JSON, default={}) # Almacenamiento optimizado de configuraciones complejas en formato JSON
     is_active = Column(Boolean, default=True)
+    # Concurrencia optimista (auditoría 2026-07-29, DB-RACE-001): sin esto, dos administradores
+    # editando el mismo tema al mismo tiempo se pisan los cambios en silencio ("last write
+    # wins"). save_chatbot_profile compara la versión enviada por el cliente contra ésta antes
+    # de aplicar un UPDATE, y la incrementa en cada guardado exitoso.
+    version = Column(Integer, nullable=False, default=1)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

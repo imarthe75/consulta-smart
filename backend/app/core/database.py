@@ -28,6 +28,8 @@ _engine = None
 _SCHEMA_PATCHES = [
     ("chat_messages", "feedback_rating", "VARCHAR(10)"),
     ("chat_messages", "feedback_text", "TEXT"),
+    ("chatbot_profiles", "custom_base_url", "VARCHAR(255)"),
+    ("chatbot_profiles", "version", "INTEGER NOT NULL DEFAULT 1"),
 ]
 
 

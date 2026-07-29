@@ -1,539 +1,225 @@
 /**
  * Store Tests - Zustand Store Testing
  * authStore, chatStore, documentStore
+ *
+ * HALLAZGO (auditoría 2026-07-29, TEST-001): la versión anterior de este archivo redefinía
+ * cada store como `vi.fn(() => ({ ...forma falsa... }))` en vez de importar el store real —
+ * las 100+ aserciones pasaban sin ejecutar ni una sola línea del código real de
+ * src/stores/*.js. Se reescribió para importar y ejercitar la implementación real.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // ============================================================================
 // Auth Store Tests
 // ============================================================================
 
 describe('authStore', () => {
-    let useAuthStore: any;
+    // authAPI se mockea para controlar exactamente qué "rol real" devuelve el backend,
+    // sin depender de una API viva — el store solo debe confiar en esta respuesta, nunca
+    // en el contenido del email/username del usuario (ver hallazgo de backdoor eliminado
+    // documentado en el propio src/stores/authStore.js).
+    vi.mock('../../src/services/api', () => ({
+        authAPI: {
+            me: vi.fn(),
+            guestLogin: vi.fn(),
+        },
+    }))
 
-    beforeEach(async () => {
-        // Mock the store
-        useAuthStore = vi.fn(() => ({
-            user: null,
-            isAuthenticated: false,
-            token: null,
-            isLoading: false,
-            error: null,
-            login: vi.fn(),
-            register: vi.fn(),
-            logout: vi.fn(),
-            setUser: vi.fn(),
-            clearError: vi.fn(),
-        }));
-    });
+    beforeEach(() => {
+        localStorage.clear()
+        vi.clearAllMocks()
+        vi.resetModules()
+    })
 
-    describe('Authentication State', () => {
-        it('should have initial state', () => {
-            const store = useAuthStore();
-            expect(store.user).toBeNull();
-            expect(store.isAuthenticated).toBe(false);
-            expect(store.token).toBeNull();
-        });
+    it('arranca sin sesión si no hay token guardado', async () => {
+        const { useAuthStore } = await import('../../src/stores/authStore')
+        const state = useAuthStore.getState()
+        expect(state.isAuthenticated).toBe(false)
+        expect(state.token).toBeNull()
+        expect(state.user).toBeNull()
+    })
 
-        it('should set user on login', async () => {
-            const store = useAuthStore();
-            const mockUser = { id: 'user-1', email: 'test@example.com', username: 'testuser' };
+    it('login() NUNCA otorga el rol admin por el contenido del email/username (regresión del backdoor de escalación de privilegios eliminado)', async () => {
+        const { authAPI } = await import('../../src/services/api')
+        authAPI.me.mockRejectedValue(new Error('network error'))
+        const { useAuthStore } = await import('../../src/stores/authStore')
 
-            store.setUser(mockUser);
+        // Un email que contenga literalmente "admin" no debe bastar para escalar el rol.
+        useAuthStore.getState().login({ email: 'admin@empresa.com', username: 'admin' }, 'fake-token')
 
-            expect(store.user).toEqual(mockUser);
-            expect(store.isAuthenticated).toBe(true);
-        });
+        const state = useAuthStore.getState()
+        expect(state.isAuthenticated).toBe(true)
+        expect(state.token).toBe('fake-token')
+        expect(state.user.role).toBe('user')
+    })
 
-        it('should store JWT token', async () => {
-            const store = useAuthStore();
-            const token = 'jwt_token_123';
+    it('login() solo asigna el rol admin cuando authAPI.me() lo confirma explícitamente', async () => {
+        const { authAPI } = await import('../../src/services/api')
+        authAPI.me.mockResolvedValue({ data: { roles: ['admin'] } })
+        const { useAuthStore } = await import('../../src/stores/authStore')
 
-            store.setUser({ id: 'user-1' });
-            // Token should be set internally
+        useAuthStore.getState().login({ email: 'real-admin@empresa.com' }, 'fake-token')
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-            expect(store.token || localStorage.getItem('token')).toBeTruthy();
-        });
+        expect(useAuthStore.getState().user.role).toBe('admin')
+    })
 
-        it('should clear user on logout', async () => {
-            const store = useAuthStore();
+    it('login() conserva el rol provisional "user" (fail-closed) si authAPI.me() falla', async () => {
+        const { authAPI } = await import('../../src/services/api')
+        authAPI.me.mockRejectedValue(new Error('401 unauthorized'))
+        const { useAuthStore } = await import('../../src/stores/authStore')
 
-            store.setUser({ id: 'user-1' });
-            expect(store.isAuthenticated).toBe(true);
+        useAuthStore.getState().login({ email: 'x@empresa.com' }, 'fake-token')
+        await new Promise((resolve) => setTimeout(resolve, 0))
 
-            store.logout();
+        expect(useAuthStore.getState().user.role).toBe('user')
+    })
 
-            expect(store.user).toBeNull();
-            expect(store.isAuthenticated).toBe(false);
-        });
-    });
+    it('login() persiste el token en localStorage', async () => {
+        const { authAPI } = await import('../../src/services/api')
+        authAPI.me.mockRejectedValue(new Error('network error'))
+        const { useAuthStore } = await import('../../src/stores/authStore')
 
-    describe('Login Action', () => {
-        it('should login with email and password', async () => {
-            const store = useAuthStore();
-            const mockLogin = vi.fn().mockResolvedValue({
-                user: { id: 'user-1', email: 'test@example.com' },
-                token: 'jwt_token',
-            });
+        useAuthStore.getState().login({ email: 'x@empresa.com' }, 'token-123')
 
-            store.login = mockLogin;
+        // localStorage está mockeado globalmente en tests/setup.ts (vi.fn() por método, sin
+        // almacenamiento real); se verifica la llamada, no un getItem() posterior.
+        expect(localStorage.setItem).toHaveBeenCalledWith('token', 'token-123')
+    })
 
-            await store.login({
-                email: 'test@example.com',
-                password: 'password123',
-            });
+    it('logout() limpia el estado y llama a localStorage.removeItem', async () => {
+        const { authAPI } = await import('../../src/services/api')
+        authAPI.me.mockRejectedValue(new Error('network error'))
+        const { useAuthStore } = await import('../../src/stores/authStore')
 
-            expect(mockLogin).toHaveBeenCalledWith({
-                email: 'test@example.com',
-                password: 'password123',
-            });
-        });
+        useAuthStore.getState().login({ email: 'x@empresa.com' }, 'token-123')
+        useAuthStore.getState().logout()
 
-        it('should handle login error', async () => {
-            const store = useAuthStore();
-            const mockLogin = vi.fn().mockRejectedValue(
-                new Error('Invalid credentials')
-            );
-
-            store.login = mockLogin;
-
-            try {
-                await store.login({
-                    email: 'test@example.com',
-                    password: 'wrong',
-                });
-            } catch (error) {
-                expect(error).toBeTruthy();
-            }
-        });
-
-        it('should set loading state during login', async () => {
-            const store = useAuthStore();
-            expect(store.isLoading).toBe(false);
-
-            // Simulate loading
-            store.isLoading = true;
-            expect(store.isLoading).toBe(true);
-
-            store.isLoading = false;
-            expect(store.isLoading).toBe(false);
-        });
-    });
-
-    describe('Register Action', () => {
-        it('should register new user', async () => {
-            const store = useAuthStore();
-            const mockRegister = vi.fn().mockResolvedValue({
-                user: { id: 'user-1', email: 'new@example.com', username: 'newuser' },
-                token: 'jwt_token',
-            });
-
-            store.register = mockRegister;
-
-            await store.register({
-                email: 'new@example.com',
-                username: 'newuser',
-                password: 'SecurePass123',
-            });
-
-            expect(mockRegister).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    email: 'new@example.com',
-                    username: 'newuser',
-                })
-            );
-        });
-
-        it('should validate email format', async () => {
-            const store = useAuthStore();
-
-            // Invalid email should fail
-            const invalidEmail = 'not-an-email';
-            // Validation typically happens before API call
-            expect(invalidEmail).not.toMatch(/^[^\s@]+@[^\s@]+\.[^\s@]+$/);
-        });
-
-        it('should validate password strength', async () => {
-            const store = useAuthStore();
-
-            const weakPassword = 'weak';
-            expect(weakPassword.length).toBeLessThan(8);
-
-            const strongPassword = 'SecurePass123';
-            expect(strongPassword.length).toBeGreaterThanOrEqual(8);
-        });
-    });
-
-    describe('Token Management', () => {
-        it('should persist token in storage', () => {
-            const store = useAuthStore();
-            const token = 'jwt_token_123';
-
-            localStorage.setItem('token', token);
-
-            expect(localStorage.getItem('token')).toBe(token);
-        });
-
-        it('should retrieve stored token on init', () => {
-            localStorage.setItem('token', 'saved_token');
-
-            const store = useAuthStore();
-            // Store should load token from localStorage
-
-            localStorage.removeItem('token');
-        });
-
-        it('should clear token on logout', () => {
-            localStorage.setItem('token', 'jwt_token');
-
-            const store = useAuthStore();
-            store.logout();
-
-            // Token should be cleared
-            expect(localStorage.getItem('token')).toBeNull() ||
-                expect(store.token).toBeNull();
-
-            localStorage.removeItem('token');
-        });
-    });
-});
+        const state = useAuthStore.getState()
+        expect(state.isAuthenticated).toBe(false)
+        expect(state.user).toBeNull()
+        expect(state.token).toBeNull()
+        expect(localStorage.removeItem).toHaveBeenCalledWith('token')
+    })
+})
 
 // ============================================================================
 // Chat Store Tests
 // ============================================================================
 
 describe('chatStore', () => {
-    let useChatStore: any;
+    let useChatStore
 
-    beforeEach(() => {
-        useChatStore = vi.fn(() => ({
+    beforeEach(async () => {
+        vi.resetModules()
+        ;({ useChatStore } = await import('../../src/stores/chatStore'))
+        useChatStore.setState({
             sessions: [],
-            currentSession: null,
+            currentSessionId: null,
             messages: [],
-            isLoading: false,
+            loading: false,
             error: null,
-            createSession: vi.fn(),
-            selectSession: vi.fn(),
-            sendMessage: vi.fn(),
-            loadHistory: vi.fn(),
-            deleteSession: vi.fn(),
-            updateSession: vi.fn(),
-        }));
-    });
+        })
+    })
 
-    describe('Session Management', () => {
-        it('should have initial state', () => {
-            const store = useChatStore();
-            expect(store.sessions).toEqual([]);
-            expect(store.currentSession).toBeNull();
-            expect(store.messages).toEqual([]);
-        });
+    it('arranca con estado vacío', () => {
+        const state = useChatStore.getState()
+        expect(state.sessions).toEqual([])
+        expect(state.messages).toEqual([])
+        expect(state.currentSessionId).toBeNull()
+    })
 
-        it('should create new session', async () => {
-            const store = useChatStore();
-            const mockCreate = vi.fn().mockResolvedValue({
-                id: 'session-1',
-                title: 'New Chat',
-                createdAt: new Date(),
-            });
+    it('addMessage agrega al final sin mutar el arreglo previo', () => {
+        const { addMessage } = useChatStore.getState()
+        addMessage({ role: 'user', content: 'hola' })
+        addMessage({ role: 'assistant', content: 'hola, ¿en qué puedo ayudarte?' })
 
-            store.createSession = mockCreate;
+        const { messages } = useChatStore.getState()
+        expect(messages).toHaveLength(2)
+        expect(messages[0].content).toBe('hola')
+        expect(messages[1].role).toBe('assistant')
+    })
 
-            await store.createSession({ title: 'New Chat' });
+    it('clearMessages vacía el historial sin afectar sessions', () => {
+        useChatStore.getState().setSessions([{ id: 's1' }])
+        useChatStore.getState().addMessage({ role: 'user', content: 'hola' })
 
-            expect(mockCreate).toHaveBeenCalledWith({ title: 'New Chat' });
-        });
+        useChatStore.getState().clearMessages()
 
-        it('should select session', () => {
-            const store = useChatStore();
-            const sessionId = 'session-1';
+        const state = useChatStore.getState()
+        expect(state.messages).toEqual([])
+        expect(state.sessions).toEqual([{ id: 's1' }])
+    })
 
-            store.selectSession(sessionId);
+    it('setLoading y setError actualizan el estado independientemente', () => {
+        useChatStore.getState().setLoading(true)
+        expect(useChatStore.getState().loading).toBe(true)
 
-            // Session should be set as current
-            expect(store.selectSession).toHaveBeenCalledWith(sessionId);
-        });
+        useChatStore.getState().setError('algo falló')
+        expect(useChatStore.getState().error).toBe('algo falló')
+        expect(useChatStore.getState().loading).toBe(true)
 
-        it('should load session history', async () => {
-            const store = useChatStore();
-            const mockLoadHistory = vi.fn().mockResolvedValue([
-                { id: '1', content: 'Hello', role: 'user' },
-                { id: '2', content: 'Hi', role: 'assistant' },
-            ]);
+        useChatStore.getState().clearError()
+        expect(useChatStore.getState().error).toBeNull()
+    })
 
-            store.loadHistory = mockLoadHistory;
-
-            await store.loadHistory('session-1');
-
-            expect(store.loadHistory).toHaveBeenCalledWith('session-1');
-        });
-
-        it('should delete session', async () => {
-            const store = useChatStore();
-            const mockDelete = vi.fn().mockResolvedValue(true);
-
-            store.deleteSession = mockDelete;
-
-            await store.deleteSession('session-1');
-
-            expect(mockDelete).toHaveBeenCalledWith('session-1');
-        });
-    });
-
-    describe('Message Management', () => {
-        it('should send message', async () => {
-            const store = useChatStore();
-            const mockSend = vi.fn().mockResolvedValue({
-                id: 'msg-1',
-                content: 'Response',
-                role: 'assistant',
-            });
-
-            store.sendMessage = mockSend;
-
-            await store.sendMessage({
-                sessionId: 'session-1',
-                content: 'Hello',
-            });
-
-            expect(mockSend).toHaveBeenCalled();
-        });
-
-        it('should store messages in order', () => {
-            const store = useChatStore();
-
-            store.messages = [
-                { id: '1', content: 'First', role: 'user', createdAt: new Date(1) },
-                { id: '2', content: 'Second', role: 'assistant', createdAt: new Date(2) },
-            ];
-
-            expect(store.messages[0].content).toBe('First');
-            expect(store.messages[1].content).toBe('Second');
-        });
-
-        it('should handle message loading state', () => {
-            const store = useChatStore();
-
-            store.isLoading = true;
-            expect(store.isLoading).toBe(true);
-
-            store.isLoading = false;
-            expect(store.isLoading).toBe(false);
-        });
-    });
-
-    describe('Error Handling', () => {
-        it('should handle send error', async () => {
-            const store = useChatStore();
-            const mockSend = vi.fn().mockRejectedValue(
-                new Error('Failed to send message')
-            );
-
-            store.sendMessage = mockSend;
-
-            try {
-                await store.sendMessage({ sessionId: 'session-1', content: 'Hello' });
-            } catch (error) {
-                expect(error).toBeTruthy();
-            }
-        });
-
-        it('should store error message', () => {
-            const store = useChatStore();
-
-            store.error = 'Connection failed';
-            expect(store.error).toBe('Connection failed');
-
-            store.error = null;
-            expect(store.error).toBeNull();
-        });
-    });
-});
+    it('setCurrentSession actualiza el id de sesión activa', () => {
+        useChatStore.getState().setCurrentSession('session-42')
+        expect(useChatStore.getState().currentSessionId).toBe('session-42')
+    })
+})
 
 // ============================================================================
 // Document Store Tests
 // ============================================================================
 
 describe('documentStore', () => {
-    let useDocumentStore: any;
+    let useDocumentStore
 
-    beforeEach(() => {
-        useDocumentStore = vi.fn(() => ({
+    beforeEach(async () => {
+        vi.resetModules()
+        ;({ useDocumentStore } = await import('../../src/stores/documentStore'))
+        useDocumentStore.setState({
             documents: [],
-            isLoading: false,
-            uploadProgress: 0,
+            loading: false,
             error: null,
-            uploadDocument: vi.fn(),
-            deleteDocument: vi.fn(),
-            getDocuments: vi.fn(),
-            updateDocument: vi.fn(),
-        }));
-    });
+            uploadProgress: 0,
+        })
+    })
 
-    describe('Document Management', () => {
-        it('should have initial state', () => {
-            const store = useDocumentStore();
-            expect(store.documents).toEqual([]);
-            expect(store.uploadProgress).toBe(0);
-            expect(store.isLoading).toBe(false);
-        });
+    it('arranca con estado vacío', () => {
+        const state = useDocumentStore.getState()
+        expect(state.documents).toEqual([])
+        expect(state.uploadProgress).toBe(0)
+    })
 
-        it('should upload document', async () => {
-            const store = useDocumentStore();
-            const mockUpload = vi.fn().mockResolvedValue({
-                id: 'doc-1',
-                filename: 'test.pdf',
-                status: 'uploaded',
-            });
+    it('addDocument agrega sin duplicar el arreglo previo', () => {
+        useDocumentStore.getState().addDocument({ id: 'doc-1', filename: 'a.pdf' })
+        useDocumentStore.getState().addDocument({ id: 'doc-2', filename: 'b.pdf' })
 
-            store.uploadDocument = mockUpload;
+        expect(useDocumentStore.getState().documents).toHaveLength(2)
+    })
 
-            const file = new File(['content'], 'test.pdf', {
-                type: 'application/pdf',
-            });
+    it('removeDocument elimina solo el documento indicado', () => {
+        useDocumentStore.getState().setDocuments([
+            { id: 'doc-1' }, { id: 'doc-2' }, { id: 'doc-3' },
+        ])
 
-            await store.uploadDocument(file);
+        useDocumentStore.getState().removeDocument('doc-2')
 
-            expect(mockUpload).toHaveBeenCalledWith(file);
-        });
+        const ids = useDocumentStore.getState().documents.map((d) => d.id)
+        expect(ids).toEqual(['doc-1', 'doc-3'])
+    })
 
-        it('should fetch documents', async () => {
-            const store = useDocumentStore();
-            const mockGet = vi.fn().mockResolvedValue([
-                { id: 'doc-1', filename: 'contract.pdf' },
-                { id: 'doc-2', filename: 'agreement.pdf' },
-            ]);
+    it('setUploadProgress y clearError actualizan el estado', () => {
+        useDocumentStore.getState().setUploadProgress(42)
+        expect(useDocumentStore.getState().uploadProgress).toBe(42)
 
-            store.getDocuments = mockGet;
+        useDocumentStore.getState().setError('fallo de subida')
+        expect(useDocumentStore.getState().error).toBe('fallo de subida')
 
-            await store.getDocuments();
-
-            expect(store.getDocuments).toHaveBeenCalled();
-        });
-
-        it('should delete document', async () => {
-            const store = useDocumentStore();
-            const mockDelete = vi.fn().mockResolvedValue(true);
-
-            store.deleteDocument = mockDelete;
-
-            await store.deleteDocument('doc-1');
-
-            expect(mockDelete).toHaveBeenCalledWith('doc-1');
-        });
-
-        it('should update document', async () => {
-            const store = useDocumentStore();
-            const mockUpdate = vi.fn().mockResolvedValue({
-                id: 'doc-1',
-                filename: 'test.pdf',
-                status: 'processed',
-            });
-
-            store.updateDocument = mockUpdate;
-
-            await store.updateDocument('doc-1', { status: 'processed' });
-
-            expect(mockUpdate).toHaveBeenCalledWith('doc-1', {
-                status: 'processed',
-            });
-        });
-    });
-
-    describe('Upload Progress', () => {
-        it('should track upload progress', () => {
-            const store = useDocumentStore();
-
-            store.uploadProgress = 0;
-            expect(store.uploadProgress).toBe(0);
-
-            store.uploadProgress = 50;
-            expect(store.uploadProgress).toBe(50);
-
-            store.uploadProgress = 100;
-            expect(store.uploadProgress).toBe(100);
-        });
-
-        it('should reset progress after upload', () => {
-            const store = useDocumentStore();
-
-            store.uploadProgress = 100;
-            store.uploadProgress = 0;
-
-            expect(store.uploadProgress).toBe(0);
-        });
-    });
-
-    describe('Error Handling', () => {
-        it('should handle upload error', async () => {
-            const store = useDocumentStore();
-            const mockUpload = vi.fn().mockRejectedValue(
-                new Error('Upload failed')
-            );
-
-            store.uploadDocument = mockUpload;
-
-            try {
-                const file = new File(['content'], 'test.pdf', {
-                    type: 'application/pdf',
-                });
-                await store.uploadDocument(file);
-            } catch (error) {
-                expect(error).toBeTruthy();
-            }
-        });
-
-        it('should store error message', () => {
-            const store = useDocumentStore();
-
-            store.error = 'File too large';
-            expect(store.error).toBe('File too large');
-
-            store.error = null;
-            expect(store.error).toBeNull();
-        });
-    });
-
-    describe('Document List Management', () => {
-        it('should add document to list', () => {
-            const store = useDocumentStore();
-
-            store.documents = [
-                { id: 'doc-1', filename: 'test.pdf' },
-            ];
-
-            expect(store.documents).toHaveLength(1);
-            expect(store.documents[0].id).toBe('doc-1');
-        });
-
-        it('should remove document from list', () => {
-            const store = useDocumentStore();
-
-            store.documents = [
-                { id: 'doc-1', filename: 'test1.pdf' },
-                { id: 'doc-2', filename: 'test2.pdf' },
-            ];
-
-            store.documents = store.documents.filter(d => d.id !== 'doc-1');
-
-            expect(store.documents).toHaveLength(1);
-            expect(store.documents[0].id).toBe('doc-2');
-        });
-
-        it('should filter documents by status', () => {
-            const store = useDocumentStore();
-
-            store.documents = [
-                { id: 'doc-1', filename: 'test.pdf', status: 'processed' },
-                { id: 'doc-2', filename: 'test2.pdf', status: 'processing' },
-                { id: 'doc-3', filename: 'test3.pdf', status: 'processed' },
-            ];
-
-            const processed = store.documents.filter(d => d.status === 'processed');
-
-            expect(processed).toHaveLength(2);
-        });
-    });
-});
+        useDocumentStore.getState().clearError()
+        expect(useDocumentStore.getState().error).toBeNull()
+    })
+})

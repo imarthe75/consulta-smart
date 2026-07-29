@@ -104,6 +104,15 @@ class Settings(BaseSettings):
     NVIDIA_NIM_BASE_URL: str = os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
     NVIDIA_NIM_MODEL: str = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
 
+    # Ollama (motor local u on-premise; no requiere API key, solo endpoint alcanzable por el backend)
+    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+    # Anthropic y Mistral: SIN default global — solo se usan como override por tema
+    # (ChatbotProfile.llm_provider), cada tema debe traer su propia custom_api_key.
+    ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
+    MISTRAL_API_KEY: Optional[str] = os.getenv("MISTRAL_API_KEY")
+    MISTRAL_BASE_URL: str = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
+
     TOP_P: float = float(os.getenv("TOP_P", "0.95"))
     
     EMBEDDING_DIMENSION: int = 384

@@ -8,7 +8,7 @@ import fitz  # PyMuPDF
 from app.core.database import get_session_factory
 from app.infrastructure.repositories.document_repository import PostgresDocumentRepository
 from app.infrastructure.repositories.vector_store import PostgresVectorStore
-from app.infrastructure.external.llm_service import get_llm_provider
+from app.infrastructure.external.llm_service import get_local_embedding_service
 from app.domain.entities.document import Document, DocumentCategory
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,10 @@ async def extract_text_from_file(file_path: Path) -> str:
 async def process_single_file(file_path: Path):
     """Procesa un archivo individual: extracción, chunking, embeddings e indexación"""
     session_factory = get_session_factory()
-    embedding_service = get_llm_provider()
+    # Se usa el servicio de embeddings local directamente (no get_llm_provider()): todos los
+    # providers de chat delegan igualmente en LocalEmbeddingService para embed(), pero solo
+    # éste expone embed_batch() para vectorizar el archivo completo en una sola pasada.
+    embedding_service = get_local_embedding_service()
     
     logger.info(f"🚀 Iniciando procesamiento automático para: {file_path.name}")
     
@@ -87,16 +90,18 @@ async def process_single_file(file_path: Path):
                 if chunk.strip():
                     chunks_text.append(chunk)
             
-            # Generar Embeddings y Guardar Chunks
+            # Generar Embeddings en lote y Guardar Chunks (PERF-INGEST-001, auditoría 2026-07-29:
+            # antes se llamaba embedding_service.embed(chunk_text) uno por uno; embed_batch()
+            # vectoriza todo el archivo en una sola pasada del modelo, mucho más rápido)
             logger.info(f"🧠 Generando embeddings para {len(chunks_text)} chunks del archivo: {file_path.name}")
-            for idx, chunk_text in enumerate(chunks_text):
-                try:
-                    embedding = await embedding_service.embed(chunk_text)
-                except Exception as embed_err:
-                    logger.warning(f"⚠️ Error generando embedding para chunk {idx}: {embed_err}. Se guardará sin embedding.")
-                    embedding = None
-                
-                from uuid6 import uuid7
+            try:
+                embeddings = await embedding_service.embed_batch(chunks_text)
+            except Exception as embed_err:
+                logger.warning(f"⚠️ Error generando embeddings en lote: {embed_err}. Se guardarán sin embedding.")
+                embeddings = [None] * len(chunks_text)
+
+            from uuid6 import uuid7
+            for idx, (chunk_text, embedding) in enumerate(zip(chunks_text, embeddings)):
                 await vector_store.add(
                     vector_id=str(uuid7()),
                     text_content=chunk_text,

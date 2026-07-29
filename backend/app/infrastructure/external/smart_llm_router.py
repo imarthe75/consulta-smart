@@ -31,9 +31,10 @@ class _OpenAICompatibleProvider:
         self.chat_model = model
 
     async def chat(self, messages: List[dict], temperature: float = 0.7, max_tokens: int = 1024, **kwargs) -> str:
+        from app.infrastructure.external.llm_service import _with_system
         response = await self.client.chat.completions.create(
             model=self.chat_model,
-            messages=messages,
+            messages=_with_system(messages, kwargs.get("system")),
             temperature=temperature,
             max_tokens=max_tokens
         )
@@ -64,18 +65,25 @@ class SmartLLMRouter:
         custom_provider: Optional[str] = None,
         custom_api_key: Optional[str] = None,
         custom_model: Optional[str] = None,
+        custom_base_url: Optional[str] = None,
     ):
         """
         Args:
             custom_provider: si se da (y no es 'default'), el router se restringe a
                 UN solo proveedor específico para este tema/tenant, en vez de la
                 cascada global de fallback. Valores soportados: 'groq', 'gemini',
-                'nvidia', 'openai'. 'vertex'/'ollama' no soportan override de API key
-                simple (Vertex usa credenciales de proyecto GCP; Ollama es local) y
-                lanzan ValueError explícito — el llamador (chat_service.py) captura
-                esto y hace fallback al router global, en vez de fallar en silencio.
-            custom_api_key: API key específica del tema para el proveedor custom.
-            custom_model: nombre de modelo específico del tema (si el proveedor lo soporta).
+                'nvidia', 'openai', 'anthropic', 'mistral', 'ollama'. 'vertex' NO
+                soporta override por tema (usa credenciales de proyecto GCP, no una
+                API key simple) y lanza ValueError explícito — el llamador
+                (chat_service.py) captura esto y hace fallback al router global, en
+                vez de fallar en silencio.
+            custom_api_key: API key específica del tema para el proveedor custom
+                (no aplica a 'ollama', que no usa API key).
+            custom_model: nombre de modelo específico del tema. Requerido para
+                'anthropic', 'mistral' y 'ollama' (no tienen un default seguro).
+            custom_base_url: endpoint del proveedor cuando aplica (obligatorio para
+                'ollama'; opcional para 'openai'/'nvidia'/'mistral' si se usa un
+                gateway/proxy propio en vez del endpoint público del proveedor).
         """
         self.providers = {
             "vertex": None,
@@ -119,7 +127,7 @@ class SmartLLMRouter:
         }
 
         if custom_provider and custom_provider.lower() != "default":
-            self._init_custom_provider(custom_provider.lower(), custom_api_key, custom_model)
+            self._init_custom_provider(custom_provider.lower(), custom_api_key, custom_model, custom_base_url)
             return
 
         # Preferencias de routing: Prioridad dinámica según .env
@@ -133,9 +141,18 @@ class SmartLLMRouter:
 
         self._initialize_providers()
 
-    def _init_custom_provider(self, provider_name: str, api_key: Optional[str], model: Optional[str]):
+    def _init_custom_provider(
+        self,
+        provider_name: str,
+        api_key: Optional[str],
+        model: Optional[str],
+        base_url: Optional[str] = None,
+    ):
         """Configura el router en modo 'un solo proveedor' con credenciales personalizadas por tema."""
-        from app.infrastructure.external.llm_service import GroqProvider, GeminiProvider, NvidiaNimProvider
+        from app.infrastructure.external.llm_service import (
+            GroqProvider, GeminiProvider, NvidiaNimProvider, OllamaProvider,
+            MistralProvider, AnthropicProvider,
+        )
 
         if provider_name == "groq":
             if not api_key:
@@ -159,11 +176,24 @@ class SmartLLMRouter:
             if not api_key:
                 raise ValueError("custom_provider='openai' requiere custom_api_key")
             instance = _OpenAICompatibleProvider(api_key=api_key, model=model or "gpt-4o-mini")
+            if base_url:
+                instance.client.base_url = base_url
+        elif provider_name == "mistral":
+            if not api_key:
+                raise ValueError("custom_provider='mistral' requiere custom_api_key")
+            instance = MistralProvider(api_key=api_key, base_url=base_url, model=model)
+        elif provider_name == "anthropic":
+            if not api_key:
+                raise ValueError("custom_provider='anthropic' requiere custom_api_key")
+            instance = AnthropicProvider(api_key=api_key, model=model)
+        elif provider_name == "ollama":
+            instance = OllamaProvider(base_url=base_url, model=model)
         else:
             raise ValueError(
                 f"custom_provider='{provider_name}' no soportado para override por tema "
-                f"(solo 'groq', 'gemini', 'nvidia', 'openai'; 'vertex' requiere credenciales "
-                f"de proyecto GCP y 'ollama' es un motor local, ninguno acepta una API key simple)."
+                f"(soportados: 'groq', 'gemini', 'nvidia', 'openai', 'mistral', 'anthropic', "
+                f"'ollama'; 'vertex' requiere credenciales de proyecto GCP, no acepta una API "
+                f"key simple por tema)."
             )
 
         self.providers = {provider_name: instance}

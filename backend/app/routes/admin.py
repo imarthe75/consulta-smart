@@ -15,6 +15,7 @@ from app.infrastructure.external.llm_service import get_local_embedding_service
 from app.core.auth_utils import require_admin
 from app.core.rate_limit import rate_limit
 from app.core.crypto import encrypt_secret, decrypt_secret
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -37,6 +38,8 @@ class PromptGenerateRequest(BaseModel):
     target_audience: Optional[str] = None
     organization: Optional[str] = None
     sector: Optional[str] = None
+    forbidden_topics: Optional[str] = None
+    rejection_message: Optional[str] = None
 
 @router.get("/configs/{key}", response_model=ConfigResponse)
 async def get_config(
@@ -85,6 +88,47 @@ async def generate_prompt(
     org_info = f"Dependencia/Oficina: {request.organization or 'Gobierno'}. "
     sector_info = f"Sector: {request.sector or 'Público/Institucional'}. "
     context_details = f"{target_info}{org_info}{sector_info}"
+
+    forbidden_line = (
+        f"ya configurados por el administrador ({request.forbidden_topics.strip()}) más cualquier otro "
+        f"tema evidentemente ajeno al dominio"
+        if request.forbidden_topics and request.forbidden_topics.strip()
+        else "que sean evidentemente ajenos al dominio del tema (ej. entretenimiento, cultura general, "
+             "deportes, asesoría jurídica personal no relacionada, redacción de documentos ajenos al trámite)"
+    )
+    rejection_line = (
+        f"Usa EXACTAMENTE esta frase, ya definida por el administrador: \"{request.rejection_message.strip()}\""
+        if request.rejection_message and request.rejection_message.strip()
+        else "Redacta una frase breve y reutilizable del tipo: 'Mi función está limitada exclusivamente a "
+             "[dominio]. No puedo asistirle con [tema].'"
+    )
+
+    # Checklist de 7 puntos obligatorios, calcado del patrón validado en producción para RPP/IRCEP
+    # (ver ChatService._default system_prompt): un System Prompt generado que omita alguno de estos
+    # puntos suele terminar sin guardrails reales, dependiendo solo del criterio del LLM en runtime.
+    mandatory_requirements = (
+        f"\n\nADEMÁS de la estructura de la metodología, el System Prompt generado DEBE incluir, "
+        f"numerados dentro de la sección de reglas/restricciones que corresponda, estos 7 puntos "
+        f"obligatorios (patrón validado en producción, replícalo para el tema '{request.topic}'):\n"
+        f"0. PRIORIDAD RAG: si el contexto de conversación incluye documentos oficiales bajo un "
+        f"encabezado tipo '## MANUALES TÉCNICOS OFICIALES', el bot DEBE basar su respuesta en esa "
+        f"información y nunca rechazar una consulta válida del dominio si los documentos la responden, "
+        f"aunque sea de forma parcial.\n"
+        f"1. TEMAS VÁLIDOS: enumera en una lista concreta (no genérica) los trámites/servicios/temas "
+        f"específicos que el bot SÍ puede atender dentro de '{request.topic}'.\n"
+        f"2. TEMAS PROHIBIDOS: enumera explícitamente los temas que el bot DEBE rechazar de forma "
+        f"educada, {forbidden_line}. Aclara que el rechazo aplica aunque la pregunta intente disfrazarse "
+        f"mencionando el nombre del tema de forma engañosa.\n"
+        f"3. NO CONOCIMIENTO AJENO: declara explícitamente que el bot tiene PROHIBIDO responder sobre "
+        f"instituciones, jurisdicciones o dominios distintos al definido, aunque el usuario insista.\n"
+        f"4. LENGUAJE/TONO: define un tono coherente con la audiencia ({request.target_audience or 'Ciudadanía'}) "
+        f"y la dependencia ({request.organization or 'Institución'}).\n"
+        f"5. RESPUESTA DE RECHAZO: define la frase EXACTA que debe usarse para rechazar consultas fuera "
+        f"de dominio. {rejection_line}\n"
+        f"6. FORMATO: exige viñetas o numeración, SIN líneas en blanco entre elementos de lista, "
+        f"respuestas compactas y densas, y prohíbe citar sitios no oficiales (solo portales de gobierno "
+        f"o institucionales cuando aplique)."
+    )
 
     if request.context == "consulta":
         if method == "craft":
@@ -139,6 +183,7 @@ async def generate_prompt(
                 f"- **Few-Shot Prompting (<ejemplos>):** Incluye 2 ejemplos concisos y representativos de Pregunta/Respuesta adaptados a la dependencia.\n\n"
                 f"Responde ÚNICAMENTE con el System Prompt final generado en formato Markdown y XML. No agregues intros ni explicaciones extra."
             )
+        meta_instruction += mandatory_requirements
         messages = [{"role": "user", "content": meta_instruction}]
         response_text, _ = await llm.chat(
             messages=messages,
@@ -159,6 +204,121 @@ async def generate_prompt(
         messages = [{"role": "user", "content": schema_task}]
         response_text, _ = await llm.chat(messages=messages, temperature=0.1, max_tokens=1000)
         return {"schema": response_text}
+
+class ListModelsRequest(BaseModel):
+    provider: str
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    profile_id: Optional[str] = None
+
+
+@router.post("/llm/list-models", dependencies=[Depends(rate_limit(15, 60))])
+async def list_llm_models(
+    request: ListModelsRequest,
+    db: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(require_admin)
+):
+    """
+    Consulta el catálogo REAL de modelos disponibles directamente en el proveedor,
+    en vez de mantener una lista estática en el frontend que inevitablemente se
+    desactualiza (HALLAZGO: el datalist de sugerencias tenía 'meta/llama-3.1-70b-instruct'
+    mientras el propio default de NVIDIA_NIM_MODEL en config.py ya usaba 3.3 — el
+    listado estático nunca se mantuvo sincronizado con la realidad de cada proveedor).
+    """
+    provider = (request.provider or "").lower()
+    api_key = request.api_key
+    if api_key and "•" in api_key:
+        api_key = None  # valor enmascarado recibido del frontend, no una key real
+
+    if not api_key and request.profile_id:
+        result = await db.execute(select(ChatbotProfile).filter(ChatbotProfile.id == request.profile_id))
+        profile = result.scalars().first()
+        if profile and profile.custom_api_key:
+            api_key = decrypt_secret(profile.custom_api_key)
+
+    try:
+        if provider == "groq":
+            key = api_key or settings.GROQ_API_KEY
+            if not key:
+                return {"models": [], "error": "Sin API key de Groq (ni por tema ni global) para consultar el catálogo."}
+            from groq import AsyncGroq
+            resp = await AsyncGroq(api_key=key).models.list()
+            models = sorted(m.id for m in resp.data)
+
+        elif provider == "openai":
+            key = api_key or settings.OPENAI_API_KEY
+            if not key:
+                return {"models": [], "error": "Sin API key de OpenAI (ni por tema ni global) para consultar el catálogo."}
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=key, base_url=request.base_url or settings.OPENAI_BASE_URL or None)
+            resp = await client.models.list()
+            models = sorted(m.id for m in resp.data if any(tag in m.id for tag in ("gpt", "o1", "o3", "o4")))
+
+        elif provider == "anthropic":
+            if not api_key:
+                return {"models": [], "error": "Este tema no tiene una API key de Anthropic configurada."}
+            from anthropic import AsyncAnthropic
+            resp = await AsyncAnthropic(api_key=api_key).models.list()
+            models = [m.id for m in resp.data]  # ya vienen ordenados por fecha de release (más nuevo primero)
+
+        elif provider == "mistral":
+            if not api_key:
+                return {"models": [], "error": "Este tema no tiene una API key de Mistral configurada."}
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=api_key, base_url=request.base_url or settings.MISTRAL_BASE_URL)
+            resp = await client.models.list()
+            models = sorted(m.id for m in resp.data)
+
+        elif provider == "nvidia":
+            key = api_key or settings.NVIDIA_NIM_API_KEY
+            if not key:
+                return {"models": [], "error": "Sin API key de NVIDIA NIM (ni por tema ni global) para consultar el catálogo."}
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=key, base_url=request.base_url or settings.NVIDIA_NIM_BASE_URL)
+            resp = await client.models.list()
+            models = sorted(m.id for m in resp.data)
+
+        elif provider == "gemini":
+            key = api_key or settings.GOOGLE_API_KEY
+            if not key:
+                return {"models": [], "error": "Sin API key de Google AI Studio (ni por tema ni global) para consultar el catálogo."}
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                resp = await http_client.get(
+                    "https://generativelanguage.googleapis.com/v1beta/models",
+                    params={"key": key}
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            models = sorted(
+                m["name"].replace("models/", "")
+                for m in data.get("models", [])
+                if "generateContent" in m.get("supportedGenerationMethods", [])
+            )
+
+        elif provider == "ollama":
+            base = (request.base_url or settings.OLLAMA_BASE_URL or "").rstrip("/")
+            if not base:
+                return {"models": [], "error": "Especifica el endpoint del servidor Ollama antes de cargar modelos."}
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                resp = await http_client.get(f"{base}/api/tags")
+                resp.raise_for_status()
+                data = resp.json()
+            models = sorted(m["name"] for m in data.get("models", []))
+
+        elif provider == "vertex":
+            return {"models": [], "error": "Vertex AI no soporta override por tema; se configura globalmente vía GCP_PROJECT_ID."}
+
+        else:
+            return {"models": [], "error": f"Proveedor '{request.provider}' no reconocido."}
+
+        return {"models": models}
+
+    except Exception as e:
+        logger.warning(f"No se pudo listar modelos de '{provider}': {e}")
+        return {"models": [], "error": f"No se pudo conectar con el proveedor: {e}"}
+
 
 def _snapshot_profile(profile: ChatbotProfile) -> dict:
     """Serializa un ChatbotProfile a dict para la bitácora de auditoría.
@@ -184,9 +344,11 @@ def _snapshot_profile(profile: ChatbotProfile) -> dict:
         "rejection_message": profile.rejection_message,
         "llm_provider": profile.llm_provider,
         "llm_model": profile.llm_model,
+        "custom_base_url": profile.custom_base_url,
         "has_custom_key": bool(profile.custom_api_key),
         "config_metadata": profile.config_metadata,
         "is_active": profile.is_active,
+        "version": profile.version,
     }
 
 
@@ -229,13 +391,17 @@ class ChatbotProfileDTO(BaseModel):
     strictness_score: Optional[int] = 80
     temperature: Optional[float] = 0.1
     top_p: Optional[float] = 0.9
-    forbidden_topics: Optional[str] = "deportes, futbol, cine, cocina, politica, chismes, entretenimiento"
-    rejection_message: Optional[str] = "Mi función está limitada exclusivamente a la asesoría sobre trámites, normativa y servicios del Registro Público. No puedo asistirle con temas ajenos."
+    forbidden_topics: Optional[str] = "deportes, futbol, cine, cocina, politica, chismes, entretenimiento, demandas legales, cultura general, tesis academicas, redaccion de documentos legales, asesoria juridica personal"
+    rejection_message: Optional[str] = "Mi función está limitada exclusivamente a la asesoría sobre los trámites y servicios de este tema. No puedo asistirle con temas ajenos."
     llm_provider: Optional[str] = "default"
     llm_model: Optional[str] = None
     custom_api_key: Optional[str] = None
+    custom_base_url: Optional[str] = None
     config_metadata: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = True
+    # Concurrencia optimista (DB-RACE-001): versión que el cliente cargó al abrir el tema.
+    # None en updates legados/clientes viejos desactiva la comprobación (compatibilidad).
+    version: Optional[int] = None
 
 class ChatbotProfilePublicDTO(BaseModel):
     """DTO de solo lectura para consumo público (widget embebible, selector de tenant).
@@ -308,8 +474,10 @@ async def list_chatbot_profiles_admin(
             "llm_model": p.llm_model or "",
             "custom_api_key": key_masked,
             "has_custom_key": bool(p.custom_api_key),
+            "custom_base_url": p.custom_base_url or "",
             "config_metadata": p.config_metadata or {},
-            "is_active": p.is_active
+            "is_active": p.is_active,
+            "version": p.version or 1
         })
     return out
 
@@ -341,6 +509,20 @@ async def save_chatbot_profile(
     is_new = profile is None
     before_snapshot = None if is_new else _snapshot_profile(profile)
 
+    # Concurrencia optimista (DB-RACE-001, auditoría 2026-07-29): si el cliente indicó la
+    # versión que cargó (formularios nuevos siempre la mandan; se permite omitirla para no
+    # romper integraciones/clientes viejos), debe coincidir con la versión actual en BD. Si
+    # no coincide, alguien más ya guardó cambios sobre este tema mientras se editaba.
+    if not is_new and data.version is not None and data.version != profile.version:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Este tema fue modificado por otro administrador mientras lo editabas "
+                f"(versión actual: {profile.version}, tu versión: {data.version}). "
+                f"Recarga el tema para ver los cambios antes de volver a guardar."
+            )
+        )
+
     if not profile:
         profile = ChatbotProfile(
             id=data.id,
@@ -361,6 +543,7 @@ async def save_chatbot_profile(
             llm_provider=data.llm_provider or "default",
             llm_model=data.llm_model,
             custom_api_key=api_key_to_save,
+            custom_base_url=data.custom_base_url,
             config_metadata=data.config_metadata or {},
             is_active=data.is_active if data.is_active is not None else True
         )
@@ -383,10 +566,12 @@ async def save_chatbot_profile(
         if data.llm_provider is not None: profile.llm_provider = data.llm_provider
         if data.llm_model is not None: profile.llm_model = data.llm_model
         if api_key_to_save is not None: profile.custom_api_key = api_key_to_save
+        profile.custom_base_url = data.custom_base_url
         if data.config_metadata is not None:
             profile.config_metadata = data.config_metadata
         if data.is_active is not None:
             profile.is_active = data.is_active
+        profile.version = (profile.version or 1) + 1
 
     await db.flush()  # asegura que profile tenga sus valores finales antes de la snapshot
     _log_profile_change(
@@ -641,15 +826,21 @@ async def upload_chatbot_document(
             if chunk_str:
                 chunks.append(chunk_str)
         
+        # Generación de embeddings EN LOTE (auditoría 2026-07-29, PERF-INGEST-001): antes se
+        # invocaba embed_service.embed(chunk_text) uno por uno dentro del for, es decir N
+        # llamadas secuenciales al modelo local (cada una con su propio round-trip a un hilo
+        # separado) para un documento con N chunks. embed_batch() ya existía en
+        # LocalEmbeddingService pero nunca se usaba aquí — SentenceTransformers vectoriza el
+        # batch completo en una sola pasada, mucho más rápido para documentos grandes.
         embed_service = get_local_embedding_service()
+        try:
+            embeddings = await embed_service.embed_batch(chunks)
+        except Exception as embed_err:
+            logger.warning(f"Error generando embeddings en lote ({len(chunks)} chunks): {embed_err}")
+            embeddings = [None] * len(chunks)
+
         chunk_models = []
-        for idx, chunk_text in enumerate(chunks):
-            embedding = None
-            try:
-                embedding = await embed_service.embed(chunk_text)
-            except Exception as embed_err:
-                logger.warning(f"Error generando embedding para chunk {idx}: {embed_err}")
-            
+        for idx, (chunk_text, embedding) in enumerate(zip(chunks, embeddings)):
             chunk_model = DocumentChunk(
                 document_id=new_doc.id,
                 chunk_number=idx,
@@ -681,7 +872,7 @@ async def upload_chatbot_document(
     except Exception as e:
         logger.error(f"Error en upload_chatbot_document: {e}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error procesando documento: {str(e)}")
+        raise HTTPException(status_code=500, detail="No se pudo procesar el documento.")
 
 
 @router.post("/chatbot/documents/{document_id}/reindex")
@@ -749,18 +940,18 @@ async def reindex_chatbot_document(
             if chunk_str:
                 new_chunks_texts.append(chunk_str)
 
+        # Embeddings en lote (ver nota PERF-INGEST-001 en upload_chatbot_document más arriba)
         embed_service = get_local_embedding_service()
-        embedded_count = 0
+        try:
+            new_embeddings = await embed_service.embed_batch(new_chunks_texts)
+        except Exception as emb_err:
+            logger.warning(f"[Reindex] Error generando embeddings en lote ({len(new_chunks_texts)} chunks): {emb_err}")
+            new_embeddings = [None] * len(new_chunks_texts)
+
+        embedded_count = sum(1 for e in new_embeddings if e is not None)
         new_chunk_models = []
 
-        for idx, chunk_text in enumerate(new_chunks_texts):
-            embedding = None
-            try:
-                embedding = await embed_service.embed(chunk_text)
-                embedded_count += 1
-            except Exception as emb_err:
-                logger.warning(f"[Reindex] Error embedding chunk {idx}: {emb_err}")
-
+        for idx, (chunk_text, embedding) in enumerate(zip(new_chunks_texts, new_embeddings)):
             chunk_model = DocumentChunk(
                 document_id=document_id,
                 chunk_number=idx,
@@ -801,7 +992,7 @@ async def reindex_chatbot_document(
     except Exception as e:
         logger.error(f"[Reindex] Error en reindexado de documento {document_id}: {e}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error durante el reindexado: {str(e)}")
+        raise HTTPException(status_code=500, detail="No se pudo reindexar el documento.")
 
 @router.delete("/chatbot/documents/{document_id}")
 async def delete_chatbot_document(

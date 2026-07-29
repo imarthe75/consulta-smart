@@ -17,6 +17,20 @@ except ImportError:
     HAS_GENAI = False
     logger.error("❌ google-genai library NOT FOUND at runtime!")
 
+def _with_system(messages: List[dict], system: Optional[str]) -> List[dict]:
+    """Antepone el system prompt como mensaje 'system' para clientes OpenAI-compatibles.
+
+    HALLAZGO: GroqProvider/NvidiaNimProvider/_OpenAICompatibleProvider recibían
+    `system` vía **kwargs pero nunca lo usaban — el system_prompt (incluyendo los
+    guardrails de TEMAS PROHIBIDOS) se perdía silenciosamente en cualquier tema
+    configurado con esos proveedores. Gemini/Vertex sí lo aplicaban (usan
+    `system_instruction` nativo), por eso el bug no era evidente en todos los temas.
+    """
+    if not system:
+        return messages
+    return [{"role": "system", "content": system}, *messages]
+
+
 # Singleton for local embeddings
 _local_embedding_service = None
 
@@ -65,7 +79,7 @@ class GroqProvider(LLMProvider):
         try:
             response = await self.client.chat.completions.create(
                 model=self.chat_model,
-                messages=messages,
+                messages=_with_system(messages, kwargs.get("system")),
                 temperature=temperature,
                 max_tokens=max_tokens
             )
@@ -245,7 +259,7 @@ class NvidiaNimProvider(LLMProvider):
         try:
             response = await self.client.chat.completions.create(
                 model=self.chat_model,
-                messages=messages,
+                messages=_with_system(messages, kwargs.get("system")),
                 temperature=temperature,
                 max_tokens=max_tokens
             )
@@ -256,6 +270,129 @@ class NvidiaNimProvider(LLMProvider):
 
     async def embed(self, text: str) -> List[float]:
         # NIM doesn't provide embeddings in the same way or we prefer local for speed/cost
+        service = get_local_embedding_service()
+        return await service.embed(text)
+
+
+class OllamaProvider(LLMProvider):
+    """Ollama Provider (motor local u on-premise, expone API compatible con OpenAI en /v1).
+
+    A diferencia de los demás proveedores, no requiere API key (el "secreto" real es
+    la red/host donde vive el servidor Ollama). `base_url` es obligatorio a nivel de
+    tema porque cada instalación on-prem vive en una dirección distinta; no hay un
+    endpoint público universal como con los proveedores cloud.
+    """
+
+    def __init__(self, base_url: Optional[str] = None, model: Optional[str] = None):
+        from openai import AsyncOpenAI
+        base_url = (base_url or settings.OLLAMA_BASE_URL or "").rstrip("/")
+        if not base_url:
+            raise ValueError("OllamaProvider requiere base_url (endpoint del servidor Ollama)")
+        if not model:
+            raise ValueError("OllamaProvider requiere un modelo explícito (ej. 'llama3.1', 'qwen2.5')")
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+        # Ollama no valida la API key, pero el SDK de OpenAI exige un valor no vacío
+        self.client = AsyncOpenAI(api_key="ollama", base_url=base_url)
+        self.chat_model = model
+        logger.info(f"✅ OllamaProvider initialized: {base_url} ({self.chat_model})")
+
+    async def chat(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        **kwargs
+    ) -> str:
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=_with_system(messages, kwargs.get("system")),
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"❌ Error in Ollama: {e}")
+            raise
+
+    async def embed(self, text: str) -> List[float]:
+        service = get_local_embedding_service()
+        return await service.embed(text)
+
+
+class MistralProvider(LLMProvider):
+    """Mistral AI provider (API compatible con OpenAI)"""
+
+    def __init__(self, api_key: str, base_url: Optional[str] = None, model: Optional[str] = None):
+        from openai import AsyncOpenAI
+        if not api_key:
+            raise ValueError("MistralProvider requiere api_key")
+        if not model:
+            raise ValueError("MistralProvider requiere un modelo explícito (ej. 'mistral-large-latest')")
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url or settings.MISTRAL_BASE_URL)
+        self.chat_model = model
+        logger.info(f"✅ MistralProvider initialized: {self.chat_model}")
+
+    async def chat(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        **kwargs
+    ) -> str:
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=_with_system(messages, kwargs.get("system")),
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"❌ Error in Mistral: {e}")
+            raise
+
+    async def embed(self, text: str) -> List[float]:
+        service = get_local_embedding_service()
+        return await service.embed(text)
+
+
+class AnthropicProvider(LLMProvider):
+    """Anthropic Claude provider"""
+
+    def __init__(self, api_key: str, model: Optional[str] = None):
+        from anthropic import AsyncAnthropic
+        if not api_key:
+            raise ValueError("AnthropicProvider requiere api_key")
+        if not model:
+            raise ValueError("AnthropicProvider requiere un modelo explícito (ej. 'claude-sonnet-4-5')")
+        self.client = AsyncAnthropic(api_key=api_key)
+        self.chat_model = model
+        logger.info(f"✅ AnthropicProvider initialized: {self.chat_model}")
+
+    async def chat(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        **kwargs
+    ) -> str:
+        try:
+            response = await self.client.messages.create(
+                model=self.chat_model,
+                system=kwargs.get("system") or "",
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            return "".join(block.text for block in response.content if block.type == "text")
+        except Exception as e:
+            logger.error(f"❌ Error in Anthropic: {e}")
+            raise
+
+    async def embed(self, text: str) -> List[float]:
+        # Anthropic no ofrece endpoint de embeddings propio
         service = get_local_embedding_service()
         return await service.embed(text)
 

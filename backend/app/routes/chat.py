@@ -58,7 +58,7 @@ async def update_session_title(
         raise
     except Exception as e:
         logger.error(f"Error actualizando sesión {session_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="No se pudo actualizar la sesión.")
 
 @router.post("/sessions")
 async def create_chat_session(
@@ -89,7 +89,7 @@ async def create_chat_session(
         }
     except Exception as e:
         logger.error(f"Error creando sesión: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="No se pudo crear la sesión.")
 
 @router.get("/sessions")
 async def list_user_sessions(
@@ -120,7 +120,7 @@ async def list_user_sessions(
         }
     except Exception as e:
         logger.error(f"Error listando sesiones: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="No se pudieron listar las sesiones.")
 
 @router.post("/query", dependencies=[Depends(rate_limit(30, 60))])
 async def chat_query(
@@ -282,7 +282,7 @@ async def chat_query(
         logger.error(f"Error en chat_query: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="No se pudo procesar la consulta. Intenta de nuevo en unos momentos.")
 
 
 
@@ -330,7 +330,7 @@ async def get_session_details(
         raise
     except Exception as e:
         logger.error(f"Error obteniendo sesión {session_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="No se pudo obtener la sesión.")
 
 
 @router.delete("/sessions/{session_id}")
@@ -370,7 +370,7 @@ async def delete_session(
         raise
     except Exception as e:
         logger.error(f"Error eliminando sesión {session_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="No se pudo eliminar la sesión.")
 
 class FeedbackRequest(BaseModel):
     rating: str  # 'up' o 'down'
@@ -418,7 +418,7 @@ async def record_message_feedback(
         raise
     except Exception as e:
         logger.error(f"Error registrando feedback para mensaje {message_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="No se pudo registrar el feedback.")
 
 @router.get("/health")
 async def chat_health():

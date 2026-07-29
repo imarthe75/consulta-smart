@@ -14,7 +14,7 @@ from app.core.response import APIResponse
 from app.infrastructure.repositories.document_repository import PostgresDocumentRepository
 from app.infrastructure.repositories.vector_store import PostgresVectorStore
 from app.infrastructure.external.seaweedfs_service import SeaweedFSFileStorage
-from app.infrastructure.external.llm_service import get_llm_provider
+from app.infrastructure.external.llm_service import get_local_embedding_service
 from app.domain.entities.document import Document, DocumentCategory
 from app.workers.celery_app import process_document_task
 from app.core.logger import logger
@@ -214,7 +214,7 @@ async def load_rpp_registry(
         
         repo = PostgresDocumentRepository(session)
         vector_store = PostgresVectorStore(session)
-        llm_service = get_llm_provider()
+        embedding_service = get_local_embedding_service()
         
         logger.info(f"Encontrados {len(md_files)} documentos MD para cargar")
         
@@ -261,17 +261,17 @@ async def load_rpp_registry(
                 # Generar embeddings - dividir en chunks
                 chunk_size = 1000
                 chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
-                
-                for idx, chunk in enumerate(chunks):
-                    embedding_vector = None
-                    try:
-                        # Intentar generar embedding
-                        embedding_vector = await llm_service.embed(chunk)
-                        logger.info(f"✅ Embedding generado para chunk {idx}")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Error en embedding del chunk {idx}: {e} - salvando sin embedding")
-                        # Continuar sin embedding, pero guardar el chunk
-                    
+
+                # Embeddings en lote (PERF-INGEST-001, auditoría 2026-07-29): una sola pasada
+                # del modelo para todo el archivo en vez de una llamada por chunk.
+                try:
+                    embeddings = await embedding_service.embed_batch(chunks)
+                    logger.info(f"✅ Embeddings generados en lote ({len(chunks)} chunks)")
+                except Exception as e:
+                    logger.warning(f"⚠️ Error en embeddings en lote: {e} - guardando sin embedding")
+                    embeddings = [None] * len(chunks)
+
+                for idx, (chunk, embedding_vector) in enumerate(zip(chunks, embeddings)):
                     try:
                         # Guardar chunk (con o sin embedding)
                         from uuid import uuid4

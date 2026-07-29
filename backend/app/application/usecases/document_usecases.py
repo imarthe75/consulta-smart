@@ -60,15 +60,29 @@ class ProcessDocumentUseCase(UseCase):
             # 6. Create chunks
             chunks = TextProcessingService.extract_chunks(clean_text)
             
-            # 7. Generate embeddings and store in Vector Store
-            for chunk_num, chunk_text in chunks:
-                embedding = await self.llm_service.create_embedding(chunk_text)
+            # 7. Generate embeddings (en lote) and store in Vector Store
+            # NOTA (auditoría 2026-07-29): esta ruta (Celery `process_document_task`) estaba
+            # rota en dos puntos que solo se manifiestan al ejecutarla: `llm_service` (uno de
+            # los providers de chat) no tiene `create_embedding`, y `vector_store.add()` no
+            # acepta el kwarg `text` (es `text_content`). No causaba fallos visibles porque
+            # los workers de Celery están detenidos; se corrige para que quede funcional si se
+            # reactivan, usando el mismo patrón de embeddings en lote que el resto del pipeline.
+            from app.infrastructure.external.llm_service import get_local_embedding_service
+            chunk_nums = [c[0] for c in chunks]
+            chunk_texts = [c[1] for c in chunks]
+            try:
+                embeddings = await get_local_embedding_service().embed_batch(chunk_texts)
+            except Exception as embed_err:
+                logger.warning(f"[UseCase] Error generando embeddings en lote: {embed_err}")
+                embeddings = [None] * len(chunk_texts)
+
+            for chunk_num, chunk_text, embedding in zip(chunk_nums, chunk_texts, embeddings):
                 await self.vector_store.add(
                     vector_id=f"{document_id}_{chunk_num}",
-                    text=chunk_text,
+                    text_content=chunk_text,
                     embedding=embedding,
                     metadata={
-                        "document_id": document_id, 
+                        "document_id": document_id,
                         "chunk": chunk_num,
                         "title": document.title,
                         "category": document.category

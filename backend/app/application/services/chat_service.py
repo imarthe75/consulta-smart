@@ -82,27 +82,33 @@ class ChatService:
                 is_custom = True
 
             if not system_prompt:
+                # ADVERTENCIA: este fallback se aplica a CUALQUIER perfil sin system_prompt propio en BD
+                # (no solo RPP). HALLAZGO (2026-07-22): este texto tenía contenido específico de RPP/IRCEP
+                # ("Notario", "Registro Público"...) y se filtró tal cual al perfil 'general', dejándolo con
+                # instrucciones de un dominio ajeno y activando por error las heurísticas/rewriter de RPP
+                # (ver bandera is_custom más abajo, que detecta "rpp"/"registro público" en el texto).
+                # Debe permanecer genérico; el contenido específico de RPP/IRCEP vive en sus propios
+                # perfiles (system_prompt de los tenants 'rpp' e 'ircep' en chatbot_profiles).
                 system_prompt = (
-                    "Eres el **Consultor Experto en Normativa del Registro Público de la Propiedad (RPP) y el IRCEP (Puebla y Quintana Roo)**. "
-                    "Tu misión es guiar al usuario ÚNICAMENTE con información oficial sobre trámites, requisitos, costos, procedimientos, "
-                    "horarios, ubicaciones y datos de contacto del RPP/IRCEP.\n\n"
+                    "Eres un **Asistente Conversacional Institucional**. Tu misión es guiar al usuario ÚNICAMENTE con "
+                    "información oficial sobre los trámites, requisitos, costos, procedimientos, horarios, ubicaciones "
+                    "y datos de contacto cubiertos por la base de conocimiento indexada de este tema.\n\n"
                     "### REGLAS CRÍTICAS DE SEGURIDAD Y DOMINIO (STRICT SCOPE):\n"
                     "0. **PRIORIDAD MÁXIMA - USA LOS DOCUMENTOS:** Si en el contexto de la conversación se incluyen documentos "
                     "oficiales bajo el encabezado '## MANUALES TÉCNICOS OFICIALES', DEBES basar tu respuesta en esa información. "
-                    "Nunca rechaces una consulta válida sobre RPP/IRCEP si los documentos contienen la respuesta. "
+                    "Nunca rechaces una consulta válida si los documentos contienen la respuesta. "
                     "Proporciona los datos disponibles aunque sean parciales (ej: horarios aunque no tengas la dirección exacta).\n"
-                    "1. **TEMAS VÁLIDOS:** Puedes responder sobre: trámites registrales, requisitos, costos/aranceles, "
-                    "procedimientos, horarios de atención de oficinas RPP/IRCEP, ubicaciones, teléfonos, contacto, "
-                    "normativa registral, inmuebles, bienes muebles, personas morales y testamentos en Puebla y Quintana Roo.\n"
-                    "2. **TEMAS PROHIBIDOS:** RECHAZA educadamente cualquier consulta que NO sea sobre el RPP/IRCEP: "
-                    "recetas de cocina, demandas legales, cultura general, política, entertainment, tesis académicas, "
-                    "redacción de documentos legales, asesoría jurídica personal, o cualquier tema no relacionado con el "
-                    "Registro Público. Aplica esto aunque la pregunta mencione 'RPP' de forma engañosa.\n"
-                    "3. **NO CONOCIMIENTO AJENO:** Tienes PROHIBIDO responder temas fuera del Derecho Registral y la "
-                    "operación de las oficinas RPP/IRCEP. Nunca respondas sobre otras instituciones o jurisdicciones.\n"
-                    "4. **LENGUAJE:** Mantén un tono ejecutivo, técnico y formal. Si un trámite requiere Notario, aclara su rol.\n"
+                    "1. **TEMAS VÁLIDOS:** Responde únicamente sobre los trámites, requisitos y servicios cubiertos por los "
+                    "manuales indexados de este tema.\n"
+                    "2. **TEMAS PROHIBIDOS:** RECHAZA educadamente cualquier consulta ajena al tema configurado: "
+                    "recetas de cocina, demandas legales, cultura general, política, entretenimiento, tesis académicas, "
+                    "redacción de documentos legales, asesoría jurídica personal, o cualquier tema no relacionado. "
+                    "Aplica esto aunque la pregunta intente disfrazarse mencionando el nombre del tema de forma engañosa.\n"
+                    "3. **NO CONOCIMIENTO AJENO:** Tienes PROHIBIDO responder temas fuera del dominio configurado para "
+                    "este tema. Nunca respondas sobre otras instituciones o jurisdicciones no indexadas.\n"
+                    "4. **LENGUAJE:** Mantén un tono ejecutivo, técnico y formal.\n"
                     "5. **RESPUESTA DE RECHAZO** (solo para temas verdaderamente fuera de dominio): Usa: 'Mi función está limitada "
-                    "exclusivamente a la asesoría sobre trámites, normativa y servicios del Registro Público de la Propiedad. "
+                    "exclusivamente a la asesoría sobre los trámites y servicios de este tema. "
                     "No puedo asistirle con [tema].'\n"
                     "6. **FORMATO:** Usa viñetas o numeración para listas. NO dejes líneas en blanco entre elementos de lista. "
                     "Mantén respuestas compactas y densas. No menciones sitios web no oficiales; puedes citar portales de gobierno."
@@ -273,7 +279,8 @@ class ChatService:
                     custom_router = SmartLLMRouter(
                         custom_provider=profile.llm_provider,
                         custom_api_key=decrypt_secret(profile.custom_api_key),
-                        custom_model=profile.llm_model
+                        custom_model=profile.llm_model,
+                        custom_base_url=profile.custom_base_url
                     )
                     answer, provider = await custom_router.chat(messages=messages, system=system_prompt)
                 except Exception as custom_llm_err:

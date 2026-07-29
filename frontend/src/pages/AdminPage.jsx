@@ -54,7 +54,13 @@ export default function AdminPage() {
     const [targetAudience, setTargetAudience] = useState('Ciudadanía en General (Público Abierto)')
     const [organization, setOrganization] = useState('Registro Público / Catastro')
     const [sector, setSector] = useState('Gobierno Estatal / Organismo Descentralizado')
-    
+
+    // Catálogo de modelos EN VIVO por proveedor (reemplaza la lista estática que se
+    // desactualizaba con cada nueva versión de modelo que sacaba cada proveedor)
+    const [availableModels, setAvailableModels] = useState([])
+    const [loadingModels, setLoadingModels] = useState(false)
+    const [modelsError, setModelsError] = useState(null)
+
     const [activeTab, setActiveTab] = useState('chatbots') // 'chatbots' o 'users'
     const [registeredUsers, setRegisteredUsers] = useState([])
     const [updatingUser, setUpdatingUser] = useState(null)
@@ -155,11 +161,13 @@ export default function AdminPage() {
                     strictness_score: active.strictness_score !== undefined ? active.strictness_score : 85,
                     temperature: active.temperature !== undefined ? active.temperature : 0.1,
                     top_p: active.top_p !== undefined ? active.top_p : 0.9,
-                    forbidden_topics: active.forbidden_topics || 'deportes, futbol, cine, cocina, politica, chismes, entretenimiento',
+                    forbidden_topics: active.forbidden_topics || 'deportes, futbol, cine, cocina, politica, chismes, entretenimiento, demandas legales, cultura general, tesis academicas, redaccion de documentos legales, asesoria juridica personal',
                     rejection_message: active.rejection_message || 'Mi función está limitada exclusivamente a la asesoría sobre trámites, normativa y servicios oficiales.',
                     llm_provider: active.llm_provider || 'default',
                     llm_model: active.llm_model || '',
                     custom_api_key: active.custom_api_key || '',
+                    custom_base_url: active.custom_base_url || '',
+                    version: active.version || 1,
                     is_active: active.is_active !== undefined ? active.is_active : true
                 })
                 setSandboxMessages([])
@@ -245,12 +253,24 @@ export default function AdminPage() {
         setSaving(true)
         setMessage(null)
         try {
-            await api.post('admin/chatbot/profiles', config)
-            setProfiles(prev => prev.map(p => p.id === config.id ? config : p))
+            const res = await api.post('admin/chatbot/profiles', config)
+            // Actualiza la versión local con la que devolvió el backend (ya incrementada) para
+            // que el siguiente "Guardar" no choque consigo mismo — ver DB-RACE-001.
+            const savedVersion = res.data?.profile?.version
+            const updatedConfig = savedVersion !== undefined ? { ...config, version: savedVersion } : config
+            setConfig(updatedConfig)
+            setProfiles(prev => prev.map(p => p.id === config.id ? updatedConfig : p))
             setMessage({ type: 'success', text: `Perfil '${config.name}' guardado correctamente.` })
         } catch (error) {
             console.error("Error saving chatbot profile:", error)
-            setMessage({ type: 'error', text: 'No se pudo guardar el perfil.' })
+            if (error.response?.status === 409) {
+                setMessage({
+                    type: 'error',
+                    text: error.response.data?.detail || 'Otro administrador modificó este tema mientras lo editabas. Cambia de tema y vuelve a seleccionarlo para recargar la versión más reciente antes de guardar de nuevo.'
+                })
+            } else {
+                setMessage({ type: 'error', text: 'No se pudo guardar el perfil.' })
+            }
         } finally {
             setSaving(false)
         }
@@ -384,13 +404,15 @@ export default function AdminPage() {
         if (!topic.trim()) return
         setGenerating(true)
         try {
-            const res = await api.post('admin/generate-prompt', { 
-                topic, 
+            const res = await api.post('admin/generate-prompt', {
+                topic,
                 context: 'consulta',
                 methodology,
                 target_audience: targetAudience,
                 organization,
-                sector
+                sector,
+                forbidden_topics: config.forbidden_topics,
+                rejection_message: config.rejection_message
             })
             if (res.data.prompt) {
                 setConfig(prev => ({ ...prev, system_prompt: res.data.prompt }))
@@ -401,6 +423,32 @@ export default function AdminPage() {
             setMessage({ type: 'error', text: 'Error al generar el prompt asistido.' })
         } finally {
             setGenerating(false)
+        }
+    }
+
+    const handleRefreshModels = async () => {
+        setLoadingModels(true)
+        setModelsError(null)
+        try {
+            const res = await api.post('admin/llm/list-models', {
+                provider: config.llm_provider,
+                api_key: config.custom_api_key,
+                base_url: config.custom_base_url,
+                profile_id: config.id
+            })
+            const models = res.data?.models || []
+            setAvailableModels(models)
+            if (res.data?.error) {
+                setModelsError(res.data.error)
+            } else if (models.length === 0) {
+                setModelsError('El proveedor no devolvió modelos.')
+            }
+        } catch (error) {
+            console.error("Error listing models:", error)
+            setAvailableModels([])
+            setModelsError('No se pudo consultar el catálogo del proveedor.')
+        } finally {
+            setLoadingModels(false)
         }
     }
 
@@ -1057,6 +1105,112 @@ export default function AdminPage() {
                                     className="w-full bg-slate-50 dark:bg-slate-855 border border-slate-200 dark:border-slate-750 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary dark:focus:ring-blue-500 text-slate-800 dark:text-slate-100 font-sans leading-relaxed shadow-inner"
                                 />
                             </div>
+
+                            {/* Nivel de Estrictez RAG & Guardrails */}
+                            <div className="p-4 bg-slate-50 dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-800 space-y-4">
+                                <div className="flex items-center space-x-2 text-slate-800 dark:text-slate-200 font-bold text-sm">
+                                    <ShieldCheck className="text-blue-500" size={18} />
+                                    <span>Control de Estrictez RAG y Filtros de Contenido (Guardrails)</span>
+                                </div>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400 -mt-2">
+                                    Estos Tópicos Prohibidos se aplican como filtro local (coincidencia de texto) <strong>antes</strong> de invocar al LLM,
+                                    y al usar "Generar" se envían al generador para que queden reflejados también dentro de la sección de reglas del
+                                    System Prompt de arriba — ambos mecanismos deben coincidir para que el bloqueo sea consistente.
+                                </p>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2">
+                                            Modo de Operación RAG
+                                        </label>
+                                        <select
+                                            name="strictness_level"
+                                            value={config.strictness_level || 'strict'}
+                                            onChange={handleConfigChange}
+                                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-medium text-slate-800 dark:text-slate-100 outline-none"
+                                        >
+                                            <option value="strict">Estricto (Responde únicamente con RAG indexado)</option>
+                                            <option value="hybrid">Híbrido (Prioriza RAG y se apoya en modelo)</option>
+                                        </select>
+                                    </div>
+
+                                    {/* Slider de Estricticidad */}
+                                    <div className="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1.5">
+                                        <div className="flex justify-between items-center text-xs font-bold text-slate-700 dark:text-slate-300">
+                                            <span>Nivel de Estricticidad RAG:</span>
+                                            <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 font-mono">
+                                                {config.strictness_score || 85}%
+                                            </span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            name="strictness_score"
+                                            min="0"
+                                            max="100"
+                                            step="5"
+                                            value={config.strictness_score || 85}
+                                            onChange={handleConfigChange}
+                                            className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                        />
+                                        <div className="flex justify-between text-[10px] text-slate-400">
+                                            <span>Flexible (0%)</span>
+                                            <span>Normal (50%)</span>
+                                            <span>Ultrarígido (100%)</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Slider de Temperatura LLM */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1.5">
+                                        <div className="flex justify-between items-center text-xs font-bold text-slate-700 dark:text-slate-300">
+                                            <span>Temperatura LLM (Creatividad vs Precision):</span>
+                                            <span className="px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 font-mono">
+                                                {config.temperature !== undefined ? config.temperature : 0.1}
+                                            </span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            name="temperature"
+                                            min="0"
+                                            max="1"
+                                            step="0.05"
+                                            value={config.temperature !== undefined ? config.temperature : 0.1}
+                                            onChange={handleConfigChange}
+                                            className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-600"
+                                        />
+                                        <div className="flex justify-between text-[10px] text-slate-400">
+                                            <span>Determinista (0.0)</span>
+                                            <span>Equilibrado (0.5)</span>
+                                            <span>Creativo (1.0)</span>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2">Tópicos Prohibidos (Separados por coma)</label>
+                                        <input
+                                            type="text"
+                                            name="forbidden_topics"
+                                            value={config.forbidden_topics || ''}
+                                            onChange={handleConfigChange}
+                                            placeholder="deportes, futbol, cine, cocina, politica, chismes, entretenimiento, demandas legales, cultura general, tesis academicas, redaccion de documentos legales, asesoria juridica personal"
+                                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary dark:focus:ring-blue-500 text-slate-800 dark:text-slate-100 font-mono"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2">Mensaje Automático de Rechazo</label>
+                                    <input
+                                        type="text"
+                                        name="rejection_message"
+                                        value={config.rejection_message || ''}
+                                        onChange={handleConfigChange}
+                                        placeholder="Mi función está limitada exclusivamente a la asesoría de trámites..."
+                                        className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary dark:focus:ring-blue-500 text-slate-800 dark:text-slate-100"
+                                    />
+                                </div>
+                            </div>
                         </div>
 
                         {/* Config Form */}
@@ -1178,24 +1332,45 @@ export default function AdminPage() {
                                         <select
                                             name="llm_provider"
                                             value={config.llm_provider || 'default'}
-                                            onChange={handleConfigChange}
+                                            onChange={(e) => {
+                                                handleConfigChange(e)
+                                                setAvailableModels([])
+                                                setModelsError(null)
+                                            }}
                                             className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-semibold text-slate-800 dark:text-slate-100 outline-none cursor-pointer"
                                         >
                                             <option value="default">Smart Router Global (Automático con Fallback)</option>
-                                            <option value="groq">Groq Cloud (Llama 3.3 70B / Mixtral)</option>
-                                            <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
-                                            <option value="anthropic">Anthropic (Claude 3.5 Sonnet / Haiku)</option>
-                                            <option value="vertex">Google Vertex AI (Gemini 1.5 Pro)</option>
-                                            <option value="gemini">Google AI Studio (Gemini 1.5 Flash)</option>
-                                            <option value="nvidia">NVIDIA NIM Cloud (Llama 3 70B Instruct)</option>
-                                            <option value="mistral">Mistral AI (Mistral Large / Codestral)</option>
+                                            <option value="groq">Groq Cloud</option>
+                                            <option value="openai">OpenAI</option>
+                                            <option value="anthropic">Anthropic (Claude)</option>
+                                            <option value="gemini">Google AI Studio (Gemini)</option>
+                                            <option value="nvidia">NVIDIA NIM Cloud</option>
+                                            <option value="mistral">Mistral AI</option>
                                             <option value="ollama">Ollama / Servidor Local u On-Premise</option>
                                         </select>
+                                        {config.llm_provider === 'vertex' && (
+                                            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
+                                                ⚠️ Vertex AI no admite override por tema (usa credenciales de proyecto GCP, no una API key). Se configura una sola vez de forma global en el servidor; cambia este tema a "Smart Router Global" para que la use automáticamente si está habilitada.
+                                            </p>
+                                        )}
+                                        <p className="text-[10px] text-slate-400 mt-1">
+                                            "Ollama" es un motor local/on-premise: no usa API key, pero requiere el endpoint del servidor (siguiente sección).
+                                        </p>
                                     </div>
 
                                     <div>
-                                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2">
-                                            Modelo Específico (Seleccionar / Escribir)
+                                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+                                            <span>Modelo Específico</span>
+                                            <button
+                                                type="button"
+                                                onClick={handleRefreshModels}
+                                                disabled={loadingModels || !config.llm_provider || config.llm_provider === 'default'}
+                                                className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                                                title="Consulta en vivo el catálogo real de modelos del proveedor"
+                                            >
+                                                {loadingModels ? <RefreshCw className="animate-spin" size={11} /> : null}
+                                                Cargar modelos disponibles
+                                            </button>
                                         </label>
                                         <input
                                             type="text"
@@ -1203,22 +1378,19 @@ export default function AdminPage() {
                                             list="model-suggestions"
                                             value={config.llm_model || ''}
                                             onChange={handleConfigChange}
-                                            placeholder="ej. gpt-4o, claude-3-5-sonnet, llama-3.3-70b-versatile"
+                                            placeholder="Escribe el modelo exacto o carga el catálogo real ↑"
                                             className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-mono text-slate-800 dark:text-slate-100 outline-none"
                                         />
                                         <datalist id="model-suggestions">
-                                            <option value="llama-3.3-70b-versatile">Groq / Llama 3.3 70B Versatile</option>
-                                            <option value="llama-3.1-8b-instant">Groq / Llama 3.1 8B Instant</option>
-                                            <option value="mixtral-8x7b-32768">Groq / Mixtral 8x7B</option>
-                                            <option value="gpt-4o">OpenAI / GPT-4o</option>
-                                            <option value="gpt-4o-mini">OpenAI / GPT-4o mini</option>
-                                            <option value="claude-3-5-sonnet-20241022">Anthropic / Claude 3.5 Sonnet</option>
-                                            <option value="claude-3-5-haiku-20241022">Anthropic / Claude 3.5 Haiku</option>
-                                            <option value="gemini-1.5-pro">Google / Gemini 1.5 Pro</option>
-                                            <option value="gemini-1.5-flash">Google / Gemini 1.5 Flash</option>
-                                            <option value="meta/llama-3.1-70b-instruct">NVIDIA NIM / Llama 3.1 70B Instruct</option>
-                                            <option value="mistral-large-latest">Mistral / Mistral Large</option>
+                                            {availableModels.map(m => <option key={m} value={m} />)}
                                         </datalist>
+                                        {modelsError ? (
+                                            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">⚠️ {modelsError}</p>
+                                        ) : availableModels.length > 0 ? (
+                                            <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1">✓ {availableModels.length} modelos cargados desde el proveedor.</p>
+                                        ) : (
+                                            <p className="text-[10px] text-slate-400 mt-1">La lista se consulta en vivo (evita depender de nombres de modelo que el proveedor puede descontinuar).</p>
+                                        )}
                                     </div>
 
                                     <div>
@@ -1231,11 +1403,29 @@ export default function AdminPage() {
                                             name="custom_api_key"
                                             value={config.custom_api_key || ''}
                                             onChange={handleConfigChange}
-                                            placeholder="gsk_... o AIza... (Se almacena encriptada)"
-                                            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-mono text-slate-800 dark:text-slate-100 outline-none"
+                                            disabled={config.llm_provider === 'ollama'}
+                                            placeholder={config.llm_provider === 'ollama' ? 'No requerida para Ollama' : 'gsk_... o AIza... (Se almacena encriptada)'}
+                                            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-mono text-slate-800 dark:text-slate-100 outline-none disabled:opacity-40 disabled:cursor-not-allowed"
                                         />
                                     </div>
                                 </div>
+
+                                {['ollama', 'openai', 'nvidia', 'mistral'].includes(config.llm_provider) && (
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2">
+                                            Endpoint / Base URL {config.llm_provider === 'ollama' ? '(obligatorio)' : '(opcional — solo si usas un proxy/gateway propio)'}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            name="custom_base_url"
+                                            value={config.custom_base_url || ''}
+                                            onChange={handleConfigChange}
+                                            placeholder={config.llm_provider === 'ollama' ? 'http://ollama-host:11434' : 'https://mi-gateway.interno/v1'}
+                                            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-mono text-slate-800 dark:text-slate-100 outline-none"
+                                        />
+                                    </div>
+                                )}
+
                                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
                                     💡 <strong>Nota de Seguridad:</strong> Las API Keys ingresadas se cifran en el backend y nunca se exponen al navegador. Al recargar la interfaz se muestran con máscara (`••••••••`). En caso de falla o límite de cuota, el sistema utiliza el Smart Router como fallback de respaldo.
                                 </p>
@@ -1250,107 +1440,6 @@ export default function AdminPage() {
                                     onChange={handleConfigChange}
                                     className="w-full bg-slate-50 dark:bg-slate-855 border border-slate-200 dark:border-slate-750 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary dark:focus:ring-blue-500 text-slate-800 dark:text-slate-100"
                                 />
-                            </div>
-
-                            {/* Nivel de Estrictez RAG & Guardrails */}
-                            <div className="p-4 bg-slate-50 dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-800 space-y-4">
-                                <div className="flex items-center space-x-2 text-slate-800 dark:text-slate-200 font-bold text-sm">
-                                    <ShieldCheck className="text-blue-500" size={18} />
-                                    <span>Control de Estrictez RAG y Filtros de Contenido (Guardrails)</span>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2">
-                                            Modo de Operación RAG
-                                        </label>
-                                        <select
-                                            name="strictness_level"
-                                            value={config.strictness_level || 'strict'}
-                                            onChange={handleConfigChange}
-                                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-medium text-slate-800 dark:text-slate-100 outline-none"
-                                        >
-                                            <option value="strict">Estricto (Responde únicamente con RAG indexado)</option>
-                                            <option value="hybrid">Híbrido (Prioriza RAG y se apoya en modelo)</option>
-                                        </select>
-                                    </div>
-
-                                    {/* Slider de Estricticidad */}
-                                    <div className="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1.5">
-                                        <div className="flex justify-between items-center text-xs font-bold text-slate-700 dark:text-slate-300">
-                                            <span>Nivel de Estricticidad RAG:</span>
-                                            <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 font-mono">
-                                                {config.strictness_score || 85}%
-                                            </span>
-                                        </div>
-                                        <input
-                                            type="range"
-                                            name="strictness_score"
-                                            min="0"
-                                            max="100"
-                                            step="5"
-                                            value={config.strictness_score || 85}
-                                            onChange={handleConfigChange}
-                                            className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                                        />
-                                        <div className="flex justify-between text-[10px] text-slate-400">
-                                            <span>Flexible (0%)</span>
-                                            <span>Normal (50%)</span>
-                                            <span>Ultrarígido (100%)</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Slider de Temperatura LLM */}
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div className="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1.5">
-                                        <div className="flex justify-between items-center text-xs font-bold text-slate-700 dark:text-slate-300">
-                                            <span>Temperatura LLM (Creatividad vs Precision):</span>
-                                            <span className="px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 font-mono">
-                                                {config.temperature !== undefined ? config.temperature : 0.1}
-                                            </span>
-                                        </div>
-                                        <input
-                                            type="range"
-                                            name="temperature"
-                                            min="0"
-                                            max="1"
-                                            step="0.05"
-                                            value={config.temperature !== undefined ? config.temperature : 0.1}
-                                            onChange={handleConfigChange}
-                                            className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-600"
-                                        />
-                                        <div className="flex justify-between text-[10px] text-slate-400">
-                                            <span>Determinista (0.0)</span>
-                                            <span>Equilibrado (0.5)</span>
-                                            <span>Creativo (1.0)</span>
-                                        </div>
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2">Tópicos Prohibidos (Separados por coma)</label>
-                                        <input
-                                            type="text"
-                                            name="forbidden_topics"
-                                            value={config.forbidden_topics || ''}
-                                            onChange={handleConfigChange}
-                                            placeholder="deportes, futbol, cine, cocina, politica, chismes, entretenimiento"
-                                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary dark:focus:ring-blue-500 text-slate-800 dark:text-slate-100 font-mono"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2">Mensaje Automático de Rechazo</label>
-                                    <input
-                                        type="text"
-                                        name="rejection_message"
-                                        value={config.rejection_message || ''}
-                                        onChange={handleConfigChange}
-                                        placeholder="Mi función está limitada exclusivamente a la asesoría de trámites..."
-                                        className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary dark:focus:ring-blue-500 text-slate-800 dark:text-slate-100"
-                                    />
-                                </div>
                             </div>
 
                             <div className="flex justify-end pt-3">
