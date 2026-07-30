@@ -27,7 +27,7 @@ services:
     - SECRET_KEY=${SECRET_KEY:-your-super-secret-key-change-in-production}
     - AUTHENTIK_URL=https://auth.casmart.internal
     - AUTHENTIK_CLIENT_ID=consulta-smart
-    - AUTHENTIK_CLIENT_SECRET=casmarts_secret_2026
+    - AUTHENTIK_CLIENT_SECRET=${AUTHENTIK_CLIENT_SECRET}
     - AUTHENTIK_INTERNAL_URL=https://auth.casmart.internal
     - VAULT_URL=http://10.4.3.208:8200
     ports:

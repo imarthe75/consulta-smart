@@ -33,6 +33,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Usuario no-root (hallazgo de seguridad, guía de remediación imarthe75 2026-07-29).
+# uid 1000: docker-compose monta ./backend:/app como bind mount de desarrollo,
+# propiedad del usuario del host (uid 1000).
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
 # Expose port
 EXPOSE 8000
 
