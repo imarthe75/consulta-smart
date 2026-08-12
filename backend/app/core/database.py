@@ -1,5 +1,6 @@
 # Database Connection & Session Management
 
+import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import text
@@ -43,21 +44,48 @@ async def _apply_schema_patches(conn):
             logger.warning(f"No se pudo aplicar el parche de esquema {table}.{column}: {e}")
 
 
+# INCIDENTE 2026-08-10: al reiniciar el host, consulta-smart-backend arrancó antes de
+# que la ruta de red hacia el Postgres externo (10.4.3.208) estuviera lista, e init_db()
+# lanzó una única vez y abortó el arranque. Con `uvicorn --reload`, el proceso reloader
+# (PID 1, el que Docker vigila para `restart: always`) NO muere cuando el worker falla su
+# arranque — solo se queda esperando un cambio de archivo para reintentar — así que Docker
+# nunca detectó el fallo ni reinició el contenedor: quedó "Up" pero sin nada escuchando en
+# el puerto durante 2 días, hasta un restart manual. Reintentar la conexión inicial con
+# backoff cubre justo esa ventana de arranque en la que la red aún no está lista.
+_DB_CONNECT_MAX_RETRIES = 5
+_DB_CONNECT_RETRY_SECONDS = 5
+
+
 async def init_db():
     """Initialize database connection and create tables"""
     global _engine
-    
+
+    logger.info(f"Connecting to database at {settings.DB_HOST}:{settings.DB_PORT}")
+    _engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=settings.DEBUG,
+        pool_size=20,
+        max_overflow=0,
+        pool_pre_ping=True,
+        connect_args={"timeout": 30}
+    )
+
+    for attempt in range(1, _DB_CONNECT_MAX_RETRIES + 1):
+        try:
+            async with _engine.begin() as conn:
+                await conn.execute(text("SELECT 1"))
+            break
+        except Exception as e:
+            if attempt == _DB_CONNECT_MAX_RETRIES:
+                logger.error(f"Failed to initialize database after {attempt} intentos: {e}")
+                raise
+            logger.warning(
+                f"No se pudo conectar a la base de datos (intento {attempt}/{_DB_CONNECT_MAX_RETRIES}): {e}. "
+                f"Reintentando en {_DB_CONNECT_RETRY_SECONDS}s..."
+            )
+            await asyncio.sleep(_DB_CONNECT_RETRY_SECONDS)
+
     try:
-        logger.info(f"Connecting to database at {settings.DB_HOST}:{settings.DB_PORT}")
-        _engine = create_async_engine(
-            settings.DATABASE_URL,
-            echo=settings.DEBUG,
-            pool_size=20,
-            max_overflow=0,
-            pool_pre_ping=True,
-            connect_args={"timeout": 30}
-        )
-        
         # Try to enable pgvector (separate transaction, don't fail if it fails)
         try:
             async with _engine.begin() as conn:
@@ -65,7 +93,7 @@ async def init_db():
             logger.info("pgvector extension enabled")
         except Exception as e:
             logger.warning(f"pgvector extension not available: {e}, continuing without vector support")
-        
+
         # Create all tables (separate transaction to ensure it runs)
         async with _engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -83,7 +111,7 @@ async def init_db():
 async def close_db():
     """Close database connections"""
     global _engine
-    
+
     if _engine:
         await _engine.dispose()
         logger.info("Database connections closed")
@@ -93,7 +121,7 @@ def get_session_factory() -> async_sessionmaker:
     """Get AsyncSession factory"""
     if not _engine:
         raise RuntimeError("Database not initialized")
-    
+
     return async_sessionmaker(
         _engine,
         class_=AsyncSession,

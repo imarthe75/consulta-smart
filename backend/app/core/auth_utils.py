@@ -47,7 +47,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(hours=settings.JWT_EXPIRATION_HOURS)
-    
+
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
     return encoded_jwt
@@ -76,6 +76,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from app.core.database import get_session
 from app.infrastructure.repositories.user_repository import PostgresUserRepository
 from app.infrastructure.models import UserModel
@@ -131,17 +132,36 @@ async def get_current_user(
         logger.info(f"Auto-registrando usuario desde Authentik: {user_email}")
         username_val = payload.get("preferred_username") or user_email.split("@")[0]
 
+        # Authentik no garantiza que `preferred_username` sea único entre cuentas
+        # distintas (visto en producción: dos usuarios reales con emails diferentes
+        # recibieron ambos preferred_username="admin_starter"). Si ya existe, se
+        # desambigua con un sufijo en vez de dejar que el INSERT reviente con
+        # IntegrityError sin manejar, lo que tumbaba get_current_user (y por tanto
+        # TODO endpoint protegido) con un 500 para ese usuario en cada request.
+        if await repo.find_by_username(username_val) is not None:
+            username_val = f"{username_val}_{uuid.uuid4().hex[:8]}"
+
         new_user = UserModel(
             id=str(uuid.uuid4()),
             email=user_email,
             username=username_val,
             password_hash=None, # No password stored! Authentik manages auth
             is_active=True,
-            roles='["user"]'
+            roles=["user"]
         )
         session.add(new_user)
-        await session.commit()
-        user = new_user
+        try:
+            await session.commit()
+        except IntegrityError:
+            # Colisión residual (carrera entre requests concurrentes del mismo
+            # usuario nuevo). Se revierte y se reintenta la búsqueda por email:
+            # si otra request ya lo creó, lo usamos; si no, es un error real.
+            await session.rollback()
+            user = await repo.find_by_email(user_email)
+            if user is None:
+                raise credentials_exception
+        else:
+            user = new_user
     elif user is None:
         raise credentials_exception
 
@@ -167,4 +187,3 @@ async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
             detail="Acceso denegado. Se requieren permisos de administrador."
         )
     return current_user
-

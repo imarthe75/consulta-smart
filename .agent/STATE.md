@@ -1,6 +1,6 @@
 # Estado del Proyecto - Consulta-Smart (RPP/IRCEP)
 
-## 📅 Última actualización: 29 de Julio, 2026 (sesión Claude Code)
+## 📅 Última actualización: 12 de Agosto, 2026 (sesión Claude Code)
 
 ## 🎯 Hitos históricos
 1.  **Restauración Completa**: Recuperación de manuales técnicos tras borrado accidental.
@@ -85,14 +85,62 @@ El usuario pidió aplicar las correcciones documentadas como diferidas en la aud
 - *Un bug puede estar dormido durante meses (o para siempre) si el proceso que lo activa está detenido (`docker ps -a`: `Exited`) — no lo vuelve inofensivo, solo invisible. Vale la pena corregirlo igual si el fix es barato, sin necesariamente reactivar el proceso detenido (esa es una decisión operativa aparte).*
 - *Antes de forzar un `npm install <pkg>@latest` para resolver un conflicto de peer-deps, verificar que la nueva versión declare soporte explícito para la versión de React ya instalada (`npm view <pkg>@latest peerDependencies`) — evita otra ronda de conflictos.*
 
+## 🛠️ Sesión 2026-08-04 — Colisión de `preferred_username` de Authentik (500 en cascada), Vault sellado, orden UI del selector LLM
+
+### Contexto de negocio
+El admin reportó fallas generalizadas en `/admin`: el selector de temas no cargaba, `Gestión de Usuarios` tampoco, bitácora de auditoría y casos de regresión fallaban, y no cargaban modelos al insertar una API key de OpenAI. Consola del navegador mostraba 500 en prácticamente todo endpoint (`/auth/me`, `/admin/users`, `/admin/chatbot/profiles/admin-list`, etc.).
+
+### Causa raíz encontrada
+`get_current_user` (`auth_utils.py`) auto-registra usuarios nuevos de Authentik usando el claim `preferred_username` del JWT como `username` local único, sin verificar colisión antes de insertar. Confirmado en logs y en BD que Authentik entregó `preferred_username="admin_starter"` a dos usuarios reales distintos (`admin_starter@casmart.internal` y otro usuario nuevo), violando `ix_users_username` con `IntegrityError` sin manejar — como `get_current_user` es la dependencia de auth de prácticamente todo endpoint protegido, tumbaba TODO con 500 para ese usuario en cada request.
+
+### Cambios de código
+- **`auth_utils.py`**: antes de insertar, verifica si el `username` ya existe (`find_by_username`) y le añade sufijo (`_<8 hex>`) si hay colisión; el `commit()` ahora captura `IntegrityError` como red de seguridad (rollback + reintento de `find_by_email` por si otra request concurrente ya creó el usuario) en vez de dejar que la excepción tumbe la request. De paso, `roles=["user"]` en vez de `roles='["user"]'` (corrige doble-encoding JSON silencioso, no rompía nada por cómo `_normalize_roles` ya toleraba ambos formatos, pero no había razón para dejarlo así).
+- **`AdminPage.jsx`**: reordenado el grid de configuración del motor LLM — antes Proveedor → Modelo → API Key, ahora Proveedor → **API Key** (centro) → **Modelo** (derecha), por pedido explícito del admin (tiene más sentido cargar el catálogo de modelos en vivo después de tener la key puesta).
+
+### Causa raíz NO corregida (fuera de este repo)
+Por qué Authentik entrega el mismo `preferred_username` a cuentas distintas vive en la configuración de `auth.casmart.internal` (property mapping / scope mapping), fuera de este monorepo. No hay token admin de Authentik en ningún `.env` de este repo — solo credenciales de cliente OIDC (`AUTHENTIK_CLIENT_ID`/`AUTHENTIK_CLIENT_SECRET`), que no sirven para administrar Authentik. El admin, al preguntársele, decidió explícitamente dejarlo así por ahora — el fix defensivo en `auth_utils.py` es suficiente por el momento. Ver `authentik_preferred_username_duplicado.md` en la memoria de Claude Code (fuera de este repo) para detalle.
+
+### Vault (hallazgo adyacente, no buscado)
+De paso se encontró Vault (`10.4.3.208:8200`, compartido por todo el portafolio) sellado tras un re-init del 2026-08-04 (pérdida de credenciales del init anterior del 30-jul). El admin lo desselló y proporcionó el `ROOT_TOKEN` nuevo; se actualizó `VAULT_TOKEN` en `consulta-smart/.env` y se re-sembró `secret/data/consulta-smart` en Vault con los mismos valores que ya estaban en efecto vía fallback local (`SECRET_KEY`, `JWT_SECRET`, `DB_PASSWORD`, `GROQ_API_KEY`, `WIDGET_PASSWORD`) — **sin rotarlos** (rotar `SECRET_KEY` habría vuelto indescifrables las `custom_api_key` ya cifradas de temas existentes; rotar `WIDGET_PASSWORD` requiere actualizar en paralelo su hash en BD). `consulta-smart-backend` confirma `🔒 Config loaded from Vault for ConsultaRPP` sin errores tras recrear el contenedor.
+
+### 🚨 Lecciones Aprendidas
+- *Un claim de un IdP externo (`preferred_username`) nunca debe asumirse único entre cuentas reales solo porque "suena" a identificador — validar colisión antes de usarlo como PK/unique key local, con manejo explícito de `IntegrityError` como red de seguridad final.*
+- *Cuando "todo" un panel admin falla con 500 a la vez, sospechar primero de una dependencia compartida (aquí, `get_current_user`) antes de investigar cada endpoint por separado — el patrón de fallo (mismo usuario, todo endpoint, siempre) es la pista.*
+- *Reseeed de secretos en Vault ≠ rotación de secretos — mover un valor ya en uso a la fuente de verdad correcta no cambia el nivel de exposición de ese valor; si el valor ya estaba comprometido (predecible, en el historial del repo), seguirá comprometido hasta una rotación real con su propia migración (re-encriptación de datos dependientes).*
+
+## 🛠️ Sesión 2026-08-12 — `consulta-smart-backend` muerto en silencio 2 días tras reinicio del host (selector de Temas vacío)
+
+### Contexto de negocio
+El admin reportó que el selector de "Tema Activo" en `/admin` aparecía completamente vacío (sin ninguna opción, ni siquiera "general"), y pidió revisar bugs en general.
+
+### Causa raíz encontrada
+No era un bug de aplicación: `consulta-smart-backend` llevaba **2 días muerto en silencio**. El host completo (`casmarts-core-proxy` y `consulta-smart-backend` con el mismo `StartedAt`) se reinició el 2026-08-10T00:33:07Z. En ese arranque, `init_db()` (`database.py`) intentó conectar una sola vez a Postgres externo (`10.4.3.208:5432`) antes de que la ruta de red del host estuviera lista, y falló con `OSError: [Errno 113] Connect call failed`. Esto propagó la excepción por `lifespan` y hizo que uvicorn abortara: `ERROR: Application startup failed. Exiting.`. Como el contenedor corre `uvicorn --reload` (`StatReload`), el proceso *reloader* (PID 1, el que Docker vigila) **no muere** cuando el worker falla su arranque — solo queda esperando un cambio de archivo para reintentar. Docker nunca detectó el fallo (`restart: always` nunca se disparó porque PID 1 seguía "vivo") y el contenedor quedó marcado `Up` en `docker ps` durante 2 días sin nada escuchando realmente en el puerto 8000. `nginx` (`casmarts-core-proxy`) devolvía 502 (`connect() failed (111: Connection refused)`) en cada request a `/api/v1/*` — visible en sus logs, no en los del backend (que no logueaba nada porque no procesaba requests).
+
+### Cambios de código
+- **`database.py::init_db()`**: la conexión inicial (`SELECT 1`) ahora reintenta hasta 5 veces con 5s de espera entre intentos antes de abortar, en vez de fallar en el primer intento. Cubre la ventana de arranque en la que la red del host aún no está lista tras un reinicio. Documentado como contrato formal en `SPECS.md` → `[CS-009]`.
+- Restart manual de `consulta-smart-backend` para recuperar el servicio de inmediato (la conectividad ya estaba disponible en el momento del diagnóstico — solo faltaba que algo reiniciara el worker).
+
+### Verificación
+- `curl` a `/docs` (host y desde `casmarts-core-proxy` por red interna) → 200.
+- `/api/v1/auth/me` y `/api/v1/admin/chatbot/profiles/admin-list` sin token → 401 limpio (no 500/502), confirmando que el resto de la cadena (Vault, DB, Authentik JWKS) sigue sana tras el incidente.
+- Revisados de paso `casmarts-idp-api/-worker`, `lexivault-backend/-worker`, `consulta-smart-frontend`: los 5 arrancaron sin problema en el mismo reinicio del host — el fallo fue específico a la ventana de conexión a Postgres de este servicio.
+- `consulta-smart-celery-worker`/`-beat` siguen `Exited` (2 semanas) — sin cambios, ver Pendientes (ya documentado desde la sesión del 29-jul, no es una regresión nueva).
+
+### 🚨 Lecciones Aprendidas
+- *`docker ps` mostrando `Up` no es evidencia de que el proceso esté sirviendo tráfico — con `uvicorn --reload`, un fallo de arranque del worker deja vivo al proceso reloader (PID 1), y `restart: always` de Docker es inútil para ese caso porque nunca ve morir el proceso raíz. Ante "todo falla pero no hay ningún log de error en el backend", revisar primero si el backend está genuinamente recibiendo requests (logs de acceso del proxy) antes de asumir que el silencio significa que no hay problema.*
+- *Un reinicio de host completo es una ventana de carrera real entre "el contenedor arranca" y "la red/routing hacia servicios externos está lista" — cualquier conexión de arranque a un servicio fuera del `docker-compose` local (Postgres externo, en este caso) debe tener retry con backoff, no un solo intento fatal.*
+- *Cuando el síntoma reportado es "no carga X" sin ningún error de consola visible (a diferencia de un 500 explícito), no descartar una falla de infraestructura más baja en la pila (proxy/upstream) solo porque no aparece en la consola del navegador — revisar los logs del proxy, no solo los del backend de aplicación.*
+
 ## 🚧 Pendientes
 - Verificar en runtime real (login admin) el endpoint `/admin/llm/list-models` contra Groq/OpenAI/Gemini con API keys reales (solo se validó a nivel de código/ruta registrada, no end-to-end con credenciales).
 - Configurar y probar un servidor Ollama real (endpoint) para validar `OllamaProvider` de punta a punta.
 - Agregar los handlers de MSW faltantes en `frontend/tests/setup.ts` (`/auth/register`, `/auth/refresh`, `/documents/{id}` GET/DELETE, `/chat/sessions/{id}/messages`, variantes de `/search`) y usar `mswServer.use(...)` por test para los 2 casos que necesitan simular error en `/auth/login`; investigar la consulta de DOM que falla en `SearchResults.test.jsx`.
 - Decidir si convertir el contenedor de frontend a `vite build` + servido estático (VITE-DEV-001) — requiere confirmación explícita antes de tocar el Dockerfile/despliegue.
 - Evaluar el bump mayor de `react-router-dom` (6→7) y `vite`/`esbuild` (5→8) en un ciclo de desarrollo con QA manual completo.
-- Investigar por qué los workers de Celery (`consulta-smart-celery-worker`/`-beat`) llevan 4 días detenidos, y decidir si reactivarlos ahora que `document_usecases.py` ya no está roto.
+- Investigar por qué los workers de Celery (`consulta-smart-celery-worker`/`-beat`) llevan 2 semanas detenidos, y decidir si reactivarlos ahora que `document_usecases.py` ya no está roto.
 - Obtener el certificado de CA real de `auth.casmart.internal` para remover el bypass `ssl.CERT_NONE` en `auth_utils.py` (depende de `casmarts-idp-*`, fuera de este repo).
+- Corregir la causa raíz en Authentik de `preferred_username` duplicado entre cuentas (fuera de este repo, requiere token admin de Authentik — ver sesión 2026-08-04).
+- Rotación real de `SECRET_KEY`/`JWT_SECRET`/`WIDGET_PASSWORD` (hoy en Vault pero con los mismos valores predecibles que ya estaban expuestos en el historial del repo) — requiere plan de migración: re-encriptar `custom_api_key` de perfiles existentes antes de rotar `SECRET_KEY`, y actualizar el hash correspondiente en BD antes de rotar `WIDGET_PASSWORD`.
 - Ampliar cobertura de trámites para municipios menores.
 - Optimizar el tiempo de respuesta de los embeddings en búsquedas complejas.
 - Integrar feedback de usuarios sobre la precisión del blindaje.

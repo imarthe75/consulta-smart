@@ -4,8 +4,8 @@ import ModuleBanner from '../components/ModuleBanner'
 import PromptRegressionPanel from '../components/admin/PromptRegressionPanel'
 import LLMObservabilityPanel from '../components/admin/LLMObservabilityPanel'
 import ProfileAuditLogPanel from '../components/admin/ProfileAuditLogPanel'
-import { 
-    Save, RefreshCw, ToggleLeft, ToggleRight, Settings, FileText, CheckCircle2, 
+import {
+    Save, RefreshCw, ToggleLeft, ToggleRight, Settings, FileText, CheckCircle2,
     AlertTriangle, Eye, Sparkles, Plus, Trash2, Layers, Upload, Image,
     Bot, MessageSquare, HelpCircle, ShieldCheck, Scale, Building2, User, Cpu, Headphones, Zap, Code, Copy, Users, UserCheck, Activity
 } from 'lucide-react'
@@ -64,7 +64,7 @@ export default function AdminPage() {
     const [activeTab, setActiveTab] = useState('chatbots') // 'chatbots' o 'users'
     const [registeredUsers, setRegisteredUsers] = useState([])
     const [updatingUser, setUpdatingUser] = useState(null)
-    
+
     // Sandbox interactive state
     const [sandboxQuery, setSandboxQuery] = useState('')
     const [sandboxMessages, setSandboxMessages] = useState([])
@@ -73,7 +73,7 @@ export default function AdminPage() {
     const handleSendSandboxTest = async (e) => {
         e.preventDefault()
         if (!sandboxQuery.trim()) return
-        
+
         const userMsg = sandboxQuery.trim()
         setSandboxMessages(prev => [...prev, { role: 'user', content: userMsg }])
         setSandboxQuery('')
@@ -86,15 +86,15 @@ export default function AdminPage() {
                 filters: { category: config.id }
             })
             const responseObj = res.data.data || res.data
-            setSandboxMessages(prev => [...prev, { 
-                role: 'assistant', 
+            setSandboxMessages(prev => [...prev, {
+                role: 'assistant',
                 content: responseObj.response || responseObj.message || 'Respuesta generada.',
                 provider: responseObj.provider || 'RAG Engine'
             }])
         } catch (err) {
             console.error("Error testing in sandbox:", err)
-            setSandboxMessages(prev => [...prev, { 
-                role: 'assistant', 
+            setSandboxMessages(prev => [...prev, {
+                role: 'assistant',
                 content: '⚠️ Error evaluando la consulta en el Sandbox local.'
             }])
         } finally {
@@ -182,16 +182,30 @@ export default function AdminPage() {
                 api.get('admin/chatbot/profiles/admin-list'),
                 api.get('admin/users')
             ])
-            
-            if (profilesRes.status === 'fulfilled') {
-                setProfiles(profilesRes.value.data)
-                if (profilesRes.value.data.length > 0) {
-                    const hasGeneral = profilesRes.value.data.some(p => p.id === 'general')
-                    setSelectedProfileId(hasGeneral ? 'general' : profilesRes.value.data[0].id)
+
+            let loadedProfiles = []
+            if (profilesRes.status === 'fulfilled' && Array.isArray(profilesRes.value.data) && profilesRes.value.data.length > 0) {
+                loadedProfiles = profilesRes.value.data
+            } else {
+                // Fallback de resiliencia: si admin-list falla (ej: 403 Forbidden o respuesta sin permisos),
+                // intentamos cargar desde el endpoint de lectura /admin/chatbot/profiles para mantener la UI funcional.
+                try {
+                    const fallbackRes = await api.get('admin/chatbot/profiles')
+                    if (Array.isArray(fallbackRes.data) && fallbackRes.data.length > 0) {
+                        loadedProfiles = fallbackRes.data
+                    }
+                } catch (fallbackErr) {
+                    console.error("Error en fallback de perfiles:", fallbackErr)
                 }
             }
 
-            if (usersRes.status === 'fulfilled') {
+            if (loadedProfiles.length > 0) {
+                setProfiles(loadedProfiles)
+                const hasGeneral = loadedProfiles.some(p => p.id === 'general')
+                setSelectedProfileId(hasGeneral ? 'general' : loadedProfiles[0].id)
+            }
+
+            if (usersRes.status === 'fulfilled' && Array.isArray(usersRes.value.data)) {
                 setRegisteredUsers(usersRes.value.data)
             }
         } catch (error) {
@@ -201,6 +215,7 @@ export default function AdminPage() {
             setLoading(false)
         }
     }
+
 
     const handleUpdateUserRole = async (userId, newRole) => {
         const confirmMsg = newRole === 'admin'
@@ -279,10 +294,10 @@ export default function AdminPage() {
     const handleCreateProfile = async (e) => {
         e.preventDefault()
         if (!newProfile.id.trim() || !newProfile.name.trim()) return
-        
+
         const cleanId = newProfile.id.toLowerCase().replace(/[^a-z0-9_-]/g, '')
         const profileData = { ...newProfile, id: cleanId }
-        
+
         setSaving(true)
         try {
             await api.post('admin/chatbot/profiles', profileData)
@@ -346,7 +361,7 @@ export default function AdminPage() {
             setMessage({ type: 'success', text: res.data.message || 'Documento vectorizado y guardado con éxito.' })
             setUploadFile(null)
             setDocTitle('')
-            
+
             const docsRes = await api.get('admin/chatbot/documents')
             setDocuments(docsRes.data)
         } catch (error) {
@@ -483,12 +498,15 @@ export default function AdminPage() {
                             <select
                                 value={selectedProfileId}
                                 onChange={(e) => setSelectedProfileId(e.target.value)}
-                                className="bg-white/10 backdrop-blur-md border border-white/20 rounded-xl px-3 py-2 text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-white/40 cursor-pointer"
+                                className="bg-slate-900/90 text-white border border-white/30 rounded-xl px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-400 cursor-pointer min-w-[220px] shadow-sm"
                             >
                                 {profiles.map(p => (
-                                    <option key={p.id} value={p.id} className="text-slate-900">{p.name} ({p.id})</option>
+                                    <option key={p.id} value={p.id} className="bg-slate-900 text-slate-100 py-1">
+                                        {p.name} ({p.id})
+                                    </option>
                                 ))}
                             </select>
+
 
                             <button
                                 onClick={() => setShowNewProfileForm(true)}
@@ -668,7 +686,7 @@ export default function AdminPage() {
                                                 </td>
                                                 <td className="p-3.5">
                                                     <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
-                                                        u.is_active 
+                                                        u.is_active
                                                             ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
                                                             : 'bg-slate-100 text-slate-500 border-slate-200'
                                                     }`}>
@@ -678,7 +696,7 @@ export default function AdminPage() {
                                                 </td>
                                                 <td className="p-3.5">
                                                     <span className={`inline-flex items-center gap-1 text-xs font-bold px-3 py-1 rounded-xl border ${
-                                                        isAdmin 
+                                                        isAdmin
                                                             ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800'
                                                             : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
                                                     }`}>
@@ -693,7 +711,7 @@ export default function AdminPage() {
                                                             disabled={updatingUser === u.id || !isAdmin}
                                                             onClick={() => handleUpdateUserRole(u.id, 'user')}
                                                             className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition flex items-center gap-1 ${
-                                                                !isAdmin 
+                                                                !isAdmin
                                                                     ? 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700'
                                                                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-slate-50'
                                                             }`}
@@ -705,7 +723,7 @@ export default function AdminPage() {
                                                             disabled={updatingUser === u.id || isAdmin}
                                                             onClick={() => handleUpdateUserRole(u.id, 'admin')}
                                                             className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition flex items-center gap-1 ${
-                                                                isAdmin 
+                                                                isAdmin
                                                                     ? 'bg-purple-100 text-purple-400 border-purple-200 dark:bg-purple-950 dark:border-purple-900'
                                                                     : 'bg-purple-600 hover:bg-purple-500 text-white border-purple-600 shadow-sm'
                                                             }`}
@@ -728,7 +746,7 @@ export default function AdminPage() {
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {/* Column 1 & 2: Chatbot Config */}
                     <div className="lg:col-span-2 space-y-6">
-                        
+
                         {/* Prompt Assistant & Plantillas Predefinidas */}
                         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-4">
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1227,7 +1245,7 @@ export default function AdminPage() {
                                     </button>
                                 )}
                             </div>
-                            
+
                             {/* Personalización de Icono Widget */}
                             <div>
                                 <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2">
@@ -1240,8 +1258,8 @@ export default function AdminPage() {
                                             type="button"
                                             onClick={() => setConfig(prev => ({ ...prev, icon: id }))}
                                             className={`p-2.5 rounded-xl border flex flex-col items-center justify-center gap-1 transition ${
-                                                config.icon === id 
-                                                    ? 'bg-blue-50 dark:bg-blue-950/40 border-primary dark:border-blue-500 text-primary dark:text-blue-400 ring-2 ring-primary/20' 
+                                                config.icon === id
+                                                    ? 'bg-blue-50 dark:bg-blue-950/40 border-primary dark:border-blue-500 text-primary dark:text-blue-400 ring-2 ring-primary/20'
                                                     : 'bg-slate-50 dark:bg-slate-850 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                                             }`}
                                             title={label}
@@ -1360,6 +1378,22 @@ export default function AdminPage() {
 
                                     <div>
                                         <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+                                            <span>API Key Personalizada</span>
+                                            <span className="text-[10px] text-emerald-600 font-bold">Protegida 🔒</span>
+                                        </label>
+                                        <input
+                                            type="password"
+                                            name="custom_api_key"
+                                            value={config.custom_api_key || ''}
+                                            onChange={handleConfigChange}
+                                            disabled={config.llm_provider === 'ollama'}
+                                            placeholder={config.llm_provider === 'ollama' ? 'No requerida para Ollama' : 'gsk_... o AIza... (Se almacena encriptada)'}
+                                            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-mono text-slate-800 dark:text-slate-100 outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
                                             <span>Modelo Específico</span>
                                             <button
                                                 type="button"
@@ -1391,22 +1425,6 @@ export default function AdminPage() {
                                         ) : (
                                             <p className="text-[10px] text-slate-400 mt-1">La lista se consulta en vivo (evita depender de nombres de modelo que el proveedor puede descontinuar).</p>
                                         )}
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
-                                            <span>API Key Personalizada</span>
-                                            <span className="text-[10px] text-emerald-600 font-bold">Protegida 🔒</span>
-                                        </label>
-                                        <input
-                                            type="password"
-                                            name="custom_api_key"
-                                            value={config.custom_api_key || ''}
-                                            onChange={handleConfigChange}
-                                            disabled={config.llm_provider === 'ollama'}
-                                            placeholder={config.llm_provider === 'ollama' ? 'No requerida para Ollama' : 'gsk_... o AIza... (Se almacena encriptada)'}
-                                            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-mono text-slate-800 dark:text-slate-100 outline-none disabled:opacity-40 disabled:cursor-not-allowed"
-                                        />
                                     </div>
                                 </div>
 
@@ -1483,8 +1501,8 @@ export default function AdminPage() {
                                 </button>
                                 <pre className="text-blue-400 font-mono leading-relaxed">
 {`<!-- ConsultaSmart Widget snippet para ${config.id} -->
-<script 
-  src="${window.location.origin}${import.meta.env.BASE_URL}widget.js" 
+<script
+  src="${window.location.origin}${import.meta.env.BASE_URL}widget.js"
   data-tenant-id="${config.id}"
   data-primary-color="${config.primary_color || '#3b82f6'}"
   data-title="${config.title || config.name}"
@@ -1517,12 +1535,12 @@ export default function AdminPage() {
                             <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
                                 Prueba el comportamiento del prompt, los Guardrails y la estricticidad de <strong>{config.name}</strong> antes de guardar.
                             </p>
-                            
+
                             {/* Interactive Sandbox Chatbox */}
                             <div className="flex-1 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden flex flex-col bg-slate-50 dark:bg-slate-950 shadow-inner">
-                                
+
                                 {/* Header Mockup */}
-                                <div 
+                                <div
                                     className="p-3.5 text-white flex items-center justify-between transition-colors duration-300 shadow"
                                     style={{ backgroundColor: config.primary_color }}
                                 >
@@ -1564,7 +1582,7 @@ export default function AdminPage() {
                                                     <ActiveIcon size={14} />
                                                 </div>
                                             )}
-                                            <div 
+                                            <div
                                                 className={`p-2.5 rounded-2xl max-w-[85%] text-xs font-medium shadow-sm ${
                                                     msg.role === 'user'
                                                         ? 'text-white rounded-tr-none'
@@ -1603,8 +1621,8 @@ export default function AdminPage() {
                                         placeholder="Prueba una pregunta o un tema prohibido (ej: cine)..."
                                         className="flex-1 bg-slate-100 dark:bg-slate-800 border-0 rounded-xl px-3 py-2 text-xs focus:outline-none text-slate-800 dark:text-slate-100"
                                     />
-                                    <button 
-                                        type="submit" 
+                                    <button
+                                        type="submit"
                                         disabled={sandboxTesting || !sandboxQuery.trim()}
                                         className="p-2.5 rounded-xl text-white opacity-90 hover:opacity-100 transition flex items-center justify-center disabled:opacity-40"
                                         style={{ backgroundColor: config.primary_color }}

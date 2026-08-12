@@ -111,3 +111,15 @@ Este archivo actúa como la capa persistente de especificaciones de OpenSpec. To
   - `npm test` corre sin el error `Failed to resolve import "@testing-library/jest-dom"` (dependencias instaladas, `vite.config.js` con `test.setupFiles`).
 - **Casos de Borde / pendiente:**
   - 29 pruebas siguen fallando por handlers de MSW faltantes en `tests/setup.ts` para varios endpoints, y 2 aserciones de `API.test.js` que necesitan `mswServer.use(...)` por test para simular errores del handler compartido de `/auth/login` — no se completó esta ronda, ver pendientes en `STATE.md`.
+
+### [CS-009] Resiliencia de arranque ante Postgres externo transitoriamente inalcanzable
+- **Estado:** `IMPLEMENTADO` (2026-08-12)
+- **Requisitos:**
+  - `init_db()` (`app/core/database.py`) debe reintentar la conexión inicial a Postgres (`SELECT 1`) hasta 5 veces con 5s de espera entre intentos antes de abortar el arranque, en vez de fallar en el primer intento.
+  - Si tras agotar los reintentos sigue sin conectar, debe seguir fallando ruidosamente (`raise`) — este contrato cubre una ventana de arranque, no un modo "arrancar sin BD".
+- **Restricciones:**
+  - `uvicorn --reload` (modo dev de este contenedor, ver `CLAUDE.md`) no reinicia el proceso worker cuando `lifespan` falla en el arranque — solo lo hace ante un cambio de archivo. Esto hace inútil `restart: always` de Docker para este caso específico (el proceso reloader, PID 1, no muere). El retry con backoff es la mitigación real; no depender de que Docker reinicie el contenedor solo.
+- **Criterios de Aceptación:**
+  - Con Postgres inalcanzable durante los primeros ~20s de arranque (p.ej. host recién reiniciado y la ruta de red aún no lista) y disponible después, el backend debe terminar arrancando sin intervención manual.
+- **Casos de Borde:**
+  - Incidente real que motivó este contrato: reinicio del host el 2026-08-10 dejó `consulta-smart-backend` con `docker ps` en estado "Up" durante 2 días sin servir tráfico (el reloader vivo, el worker muerto tras `OSError: [Errno 113] Connect call failed ('10.4.3.208', 5432)`), causando que el selector de "Tema Activo" y el resto del panel admin aparecieran vacíos sin ningún error 500 visible (nginx devolvía 502 por upstream inalcanzable). Corregido con restart manual + este retry. Ver `STATE.md` sesión 2026-08-12.
