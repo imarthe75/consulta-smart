@@ -17,18 +17,18 @@ class ChatService:
     Servicio de chat especializado en materia Registral y Catastral (RPP/IRCEP).
     Integra RAG con reglas de negocio regionales estrictas.
     """
-    
+
     def __init__(self):
         self._llm = None
         self._cache = None
         self.knowledge_base = KnowledgeBase()
         logger.info("✅ ChatService: Cargado con reglas específicas RPP/IRCEP 2026")
-    
+
     async def _get_llm(self):
         if self._llm is None:
             self._llm = await get_smart_router()
         return self._llm
-    
+
     async def _get_cache(self):
         if self._cache is None:
             self._cache = await get_cache_instance()
@@ -49,12 +49,42 @@ class ChatService:
             system_prompt = None
             welcome_msg = "¡Hola! ¿En qué puedo apoyarle hoy?"
             profile_id = "general"  # Por defecto es el chatbot genérico
-            
+
             if filters:
                 if "category" in filters:
                     profile_id = filters["category"]
                 elif "profile_id" in filters:
                     profile_id = filters["profile_id"]
+
+            # ── Caché híbrida (Redis + embeddings) ───────────────────────────
+            # HALLAZGO 2026-08-14: _get_cache() existía pero nunca se llamaba desde
+            # aquí -- la caché estaba completamente desconectada del flujo real, así
+            # que CADA consulta (incluso repetida palabra por palabra) pagaba el
+            # costo/latencia completo de RAG+LLM. Solo se usa para preguntas sin
+            # historial de conversación (primer turno): una respuesta cacheada de una
+            # pregunta aislada puede ser incorrecta si en realidad era una continuación
+            # contextual ("¿y eso cuánto cuesta?"), así que ese caso se excluye a
+            # propósito. `namespace=profile_id` aísla el caché por tenant (ver
+            # cache_layer.py::_generate_cache_key) para que una respuesta de un tema no
+            # se sirva jamás a otro tema con una pregunta similar/idéntica.
+            cache_hit = None
+            if not conversation_history:
+                try:
+                    cache = await self._get_cache()
+                    cache_hit = await cache.get_with_fallback(query, namespace=profile_id)
+                except Exception as cache_err:
+                    logger.warning(f"⚠️ Caché no disponible, continuando sin ella: {cache_err}")
+
+            if cache_hit and not cache_hit.get("needs_llm_refinement"):
+                logger.info(f"🟢 CACHE HIT ({profile_id}): {query[:50]}...")
+                return {
+                    "response": cache_hit.get("response", ""),
+                    "provider": "cache",
+                    "session_id": session_id,
+                    "sources": cache_hit.get("sources", []),
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "from_cache": "exact_or_similar",
+                }
 
             if db_session:
                 try:
@@ -113,7 +143,7 @@ class ChatService:
                     "6. **FORMATO:** Usa viñetas o numeración para listas. NO dejes líneas en blanco entre elementos de lista. "
                     "Mantén respuestas compactas y densas. No menciones sitios web no oficiales; puedes citar portales de gobierno."
                 )
-            
+
             # 2. Filtro local de saludos
             clean_query = query.lower().strip()
             greetings = ['hola', 'buenos dias', 'buenos días', 'buenas tardes', 'buenas noches', 'saludos', 'que tal', 'quien eres']
@@ -128,7 +158,7 @@ class ChatService:
             # 3. Guardrails Dinámicos y Filtro de Tópicos Prohibidos por Perfil
             forbidden_list = []
             rejection_text = "Consulta fuera de dominio."
-            
+
             if db_session:
                 try:
                     stmt = select(ChatbotProfile).where(ChatbotProfile.id == profile_id)
@@ -141,7 +171,7 @@ class ChatService:
                             rejection_text = profile.rejection_message
                 except Exception as e:
                     logger.warning(f"Error evaluando guardrails de perfil {profile_id}: {e}")
-            
+
             # Evaluación de tópicos prohibidos en la consulta
             for topic in forbidden_list:
                 if topic in clean_query:
@@ -173,7 +203,7 @@ class ChatService:
                 h_logic = heuristics.apply_search_logic(query)
             h_jurisdiction = h_logic.get("jurisdiction")
             h_entities = h_logic.get("entities")
-            
+
             if h_jurisdiction:
                 logger.info(f"⚖️ Heurística: Jurisdicción detectada -> {h_jurisdiction}")
                 if not filters: filters = {}
@@ -183,12 +213,12 @@ class ChatService:
             logger.info("🚧 CP-1: Entrando a Rewriter")
             llm = await self._get_llm()
             search_query = query
-            
+
             # Boost query con entidades críticas
             if h_entities:
                 search_query = f"{' '.join(h_entities)} {query}"
                 logger.info(f"🚀 Boosting query con entidades: {h_entities}")
-            
+
             # Solo reescribir si la consulta es compleja (> 3 palabras) y no es personalizado
             if len(query.split()) > 3 and not is_custom:
                 try:
@@ -212,7 +242,7 @@ class ChatService:
             # 5. Búsqueda RAG con Umbral Ampliado (0.70) para mayor cobertura
             logger.info("🚧 CP-2: Entrando a Búsqueda RAG")
             raw_docs = await self.knowledge_base.search_in_knowledge_async(search_query, session=db_session, top_k=3, filters=filters)
-            
+
             relevant_docs = []
             for d in raw_docs:
                 rel_str = d.get('relevance', '1.0')
@@ -289,7 +319,7 @@ class ChatService:
                     provider = f"{provider} (Fallback por error en {profile.llm_provider})"
             else:
                 answer, provider = await llm.chat(messages=messages, system=system_prompt)
-            
+
             # 7. Blindaje de Alucinaciones (Grounding Verification)
             if settings.STRICT_GROUNDING and relevant_docs:
                 logger.info("🛡️ Iniciando Blindaje (Grounding Check)...")
@@ -300,7 +330,7 @@ class ChatService:
                     provider = f"{provider} (Verified/Corrected)"
                 else:
                     logger.info("✅ Respuesta validada por Grounding")
-            
+
             # ── Construcción de fuentes para la UI ───────────────────────────
             # Se construye una lista de objetos enriquecidos (no strings planos)
             # deduplicada por documento (por 'source'/filename) conservando el
@@ -321,7 +351,23 @@ class ChatService:
                     "version_label": d.get("version_label"),    # versión del reglamento
                     "relevance":    d.get("relevance", ""),     # distancia/método
                 })
-            
+
+            # Guardar en caché para la próxima consulta idéntica/similar en este mismo
+            # tenant -- solo cuando fue una pregunta de primer turno (ver condición
+            # espejo al inicio de esta función) y hubo una respuesta real de un LLM
+            # (nunca cachear el fallback offline, que es una plantilla genérica, no
+            # una respuesta real a esta pregunta).
+            if not conversation_history and provider != "fallback_offline":
+                try:
+                    cache = await self._get_cache()
+                    await cache.store_response(
+                        query, answer,
+                        sources=[s["filename"] for s in sources],
+                        namespace=profile_id,
+                    )
+                except Exception as cache_err:
+                    logger.warning(f"⚠️ No se pudo guardar en caché: {cache_err}")
+
             return {
                 "response": answer,
                 "provider": f"{provider} (RAG)" if relevant_docs else f"{provider} (General)",
@@ -329,7 +375,7 @@ class ChatService:
                 "sources": sources,
                 "timestamp": datetime.utcnow().isoformat()
             }
-            
+
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
@@ -349,7 +395,7 @@ class ChatService:
         try:
             llm = await self._get_llm()
             context = "\n".join([d.get('content', '') for d in docs])
-            
+
             verify_prompt = (
                 f"Eres un Auditor de Veracidad Legal. Tu tarea es comparar la RESPUESTA con el CONTEXTO proporcionado.\n\n"
                 f"CONTEXTO OFICIAL:\n{context[:3000]}\n\n"
@@ -359,10 +405,10 @@ class ChatService:
                 f"Responde en formato JSON:\n"
                 f"{{\"is_grounded\": true/false, \"corrected_answer\": \"(Solo si es necesario, una versión que diga que no hay información sobre los puntos inventados)\"}}"
             )
-            
+
             # Usar un modelo rápido para validación
             res_json, _ = await llm.chat([{"role": "user", "content": verify_prompt}], temperature=0)
-            
+
             # Intentar parsear JSON
             try:
                 data = json.loads(res_json.strip())
@@ -371,7 +417,7 @@ class ChatService:
                 # Si falla el parseo, confiar en heurística simple de heuristics.py
                 is_grounded = heuristics.is_answer_grounded(answer, context)
                 return is_grounded, answer
-                
+
         except Exception as e:
             logger.error(f"Error en blindaje: {e}")
             return True, answer

@@ -42,7 +42,7 @@ def get_local_embedding_service():
 
 class LLMProvider(ABC):
     """Abstract base for LLM providers"""
-    
+
     @abstractmethod
     async def chat(
         self,
@@ -53,7 +53,7 @@ class LLMProvider(ABC):
     ) -> str:
         """Send chat request to LLM"""
         pass
-    
+
     @abstractmethod
     async def embed(self, text: str) -> List[float]:
         """Generate embedding for text"""
@@ -62,10 +62,10 @@ class LLMProvider(ABC):
 
 class GroqProvider(LLMProvider):
     """Groq LLM provider (Fast fallback)"""
-    
+
     def __init__(self, api_key: str = settings.GROQ_API_KEY):
         from groq import AsyncGroq
-        self.client = AsyncGroq(api_key=api_key)
+        self.client = AsyncGroq(api_key=api_key, timeout=30.0)
         self.chat_model = settings.GROQ_MODEL
         logger.info(f"✅ GroqProvider initialized (Modern Async)")
 
@@ -95,18 +95,18 @@ class GroqProvider(LLMProvider):
 
 class GeminiProvider(LLMProvider):
     """Google Gemini provider (Modern Unified SDK)"""
-    
+
     def __init__(self, api_key: str = settings.GOOGLE_API_KEY):
         if not HAS_GENAI:
             raise ImportError("Google GenAI SDK is missing or could not be loaded")
         if not api_key:
             raise ValueError("GOOGLE_API_KEY must be provided")
-            
+
         # Initialize the modern Unified Client
         self.client = genai.Client(api_key=api_key)
         self.model_name = settings.GEMINI_MODEL
         logger.info(f"✅ GeminiProvider initialized (Unified SDK): {self.model_name}")
-    
+
     async def chat(
         self,
         messages: List[dict],
@@ -117,7 +117,7 @@ class GeminiProvider(LLMProvider):
         import asyncio
         import random
         from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-        
+
         # Prepare contents
         contents = []
         for msg in messages:
@@ -125,7 +125,7 @@ class GeminiProvider(LLMProvider):
                 "role": "user" if msg["role"] == "user" else "model",
                 "parts": [{"text": msg["content"]}]
             })
-        
+
         system_instruction = kwargs.get("system", None)
 
         @retry(
@@ -142,7 +142,10 @@ class GeminiProvider(LLMProvider):
                     config={
                         "temperature": temperature,
                         "max_output_tokens": max_tokens,
-                        "system_instruction": system_instruction
+                        "system_instruction": system_instruction,
+                        # thinking_budget=0: ver comentario igual en VertexAIProvider.chat()
+                        # -- incidente real 2026-08-13 con gemini-flash-latest.
+                        "thinking_config": {"thinking_budget": 0},
                     }
                 )
             except Exception as e:
@@ -171,7 +174,7 @@ class GeminiProvider(LLMProvider):
 
 class VertexAIProvider(LLMProvider):
     """Vertex AI Provider (Enterprise Fallback using Unified SDK)"""
-    
+
     def __init__(self, project_id: Optional[str] = None, location: Optional[str] = None):
         project_id = project_id or settings.GCP_PROJECT_ID
         location = location or settings.GCP_LOCATION
@@ -198,7 +201,7 @@ class VertexAIProvider(LLMProvider):
     ) -> str:
         if not self.client:
             raise Exception("Vertex AI not available")
-            
+
         # Prepare contents (Conversational History)
         contents = []
         for msg in messages:
@@ -206,7 +209,7 @@ class VertexAIProvider(LLMProvider):
                 "role": "user" if msg["role"] == "user" else "model",
                 "parts": [{"text": msg["content"]}]
             })
-        
+
         system_instruction = kwargs.get("system", None)
 
         try:
@@ -219,7 +222,14 @@ class VertexAIProvider(LLMProvider):
                     config={
                         "temperature": temperature,
                         "max_output_tokens": max_tokens,
-                        "system_instruction": system_instruction
+                        "system_instruction": system_instruction,
+                        # thinking_budget=0: sin esto, los modelos "-latest"/2.5+ gastan una
+                        # porción variable de max_output_tokens en razonamiento interno, que
+                        # a veces se filtra al texto visible y deja la respuesta cortada a
+                        # medias (incidente real 2026-08-13, ver BITACORA_ANALISIS_CAUSAL.md:
+                        # finish_reason MAX_TOKENS con ~500 "thoughts_token_count" y texto de
+                        # instrucciones en inglés filtrado antes del contenido real).
+                        "thinking_config": {"thinking_budget": 0},
                     }
                 ),
                 timeout=30.0 # Timeout de 30 segundos para evitar colapsos
@@ -239,12 +249,16 @@ class VertexAIProvider(LLMProvider):
 
 class NvidiaNimProvider(LLMProvider):
     """NVIDIA NIM provider (OpenAI compatible)"""
-    
+
     def __init__(self, api_key: str = settings.NVIDIA_NIM_API_KEY):
         from openai import AsyncOpenAI
+        # timeout=30.0 explicito: incidente real 2026-08-13, sin esto el default del SDK
+        # (10 min) dejo una llamada colgada sin responder ni fallar, bloqueando el failover
+        # del router a Gemini durante mas de 7 minutos (ver SmartLLMRouter.chat()).
         self.client = AsyncOpenAI(
             api_key=api_key,
-            base_url=settings.NVIDIA_NIM_BASE_URL
+            base_url=settings.NVIDIA_NIM_BASE_URL,
+            timeout=30.0
         )
         self.chat_model = settings.NVIDIA_NIM_MODEL
         logger.info(f"✅ NvidiaNimProvider initialized: {self.chat_model}")
@@ -274,6 +288,83 @@ class NvidiaNimProvider(LLMProvider):
         return await service.embed(text)
 
 
+class OpenRouterProvider(LLMProvider):
+    """OpenRouter provider (API compatible con OpenAI, agrega cientos de modelos de
+    múltiples proveedores bajo una sola key). Agregado 2026-08-14 como respaldo
+    adicional en la cascada global -- ver BITACORA_ANALISIS_CAUSAL.md."""
+
+    def __init__(self, api_key: str = settings.OPENROUTER_API_KEY):
+        from openai import AsyncOpenAI
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=settings.OPENROUTER_BASE_URL,
+            timeout=30.0
+        )
+        self.chat_model = settings.OPENROUTER_MODEL
+        logger.info(f"✅ OpenRouterProvider initialized: {self.chat_model}")
+
+    async def chat(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        **kwargs
+    ) -> str:
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=_with_system(messages, kwargs.get("system")),
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"❌ Error in OpenRouter: {e}")
+            raise
+
+    async def embed(self, text: str) -> List[float]:
+        service = get_local_embedding_service()
+        return await service.embed(text)
+
+
+class CerebrasProvider(LLMProvider):
+    """Cerebras provider (API compatible con OpenAI, inferencia de muy baja latencia).
+    Agregado 2026-08-14 -- ver BITACORA_ANALISIS_CAUSAL.md."""
+
+    def __init__(self, api_key: str = settings.CEREBRAS_API_KEY):
+        from openai import AsyncOpenAI
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=settings.CEREBRAS_BASE_URL,
+            timeout=30.0
+        )
+        self.chat_model = settings.CEREBRAS_MODEL
+        logger.info(f"✅ CerebrasProvider initialized: {self.chat_model}")
+
+    async def chat(
+        self,
+        messages: List[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        **kwargs
+    ) -> str:
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=_with_system(messages, kwargs.get("system")),
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"❌ Error in Cerebras: {e}")
+            raise
+
+    async def embed(self, text: str) -> List[float]:
+        service = get_local_embedding_service()
+        return await service.embed(text)
+
+
 class OllamaProvider(LLMProvider):
     """Ollama Provider (motor local u on-premise, expone API compatible con OpenAI en /v1).
 
@@ -293,7 +384,7 @@ class OllamaProvider(LLMProvider):
         if not base_url.endswith("/v1"):
             base_url = f"{base_url}/v1"
         # Ollama no valida la API key, pero el SDK de OpenAI exige un valor no vacío
-        self.client = AsyncOpenAI(api_key="ollama", base_url=base_url)
+        self.client = AsyncOpenAI(api_key="ollama", base_url=base_url, timeout=30.0)
         self.chat_model = model
         logger.info(f"✅ OllamaProvider initialized: {base_url} ({self.chat_model})")
 
@@ -330,7 +421,7 @@ class MistralProvider(LLMProvider):
             raise ValueError("MistralProvider requiere api_key")
         if not model:
             raise ValueError("MistralProvider requiere un modelo explícito (ej. 'mistral-large-latest')")
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url or settings.MISTRAL_BASE_URL)
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url or settings.MISTRAL_BASE_URL, timeout=30.0)
         self.chat_model = model
         logger.info(f"✅ MistralProvider initialized: {self.chat_model}")
 
@@ -399,7 +490,7 @@ class AnthropicProvider(LLMProvider):
 
 class LLMService:
     """Main LLM service orchestrator"""
-    
+
     def __init__(self):
         from app.infrastructure.external.smart_llm_router import SmartLLMRouter
         self.router = SmartLLMRouter()

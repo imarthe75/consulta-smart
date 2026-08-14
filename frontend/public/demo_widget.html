@@ -80,40 +80,69 @@
         el entorno y configurará una sesión de invitado segura sin requerir autenticación manual.
     </p>
 
-    <h3>1. Cargar el Script</h3>
-    <p>Añada este script antes del cierre de la etiqueta <code>&lt;/body&gt;</code>:</p>
+    <h3>1. Cargar el Script (único paso)</h3>
+    <p>Añada este <code>&lt;script&gt;</code> antes del cierre de la etiqueta <code>&lt;/body&gt;</code>. El widget se auto-inyecta como burbuja flotante — no requiere un segundo elemento HTML:</p>
     <div class="code-container">
-        <pre>&lt;<span class="tag">script</span> <span class="attr">src</span>=<span class="val">"http://10.4.3.28:3001/static/rpp-widget.js"</span>&gt;&lt;/<span class="tag">script</span>&gt;</pre>
+        <pre>&lt;<span class="tag">script</span>
+    <span class="attr">src</span>=<span class="val">"https://chat.casmart.internal/widget.js"</span>
+    <span class="attr">data-tenant-id</span>=<span class="val">"rpp"</span>
+    <span class="attr">data-primary-color</span>=<span class="val">"#004a87"</span>
+    <span class="attr">data-title</span>=<span class="val">"Consultor Experto RPP"</span>
+    <span class="attr">async</span>&gt;
+&lt;/<span class="tag">script</span>&gt;</pre>
     </div>
 
-    <h3>2. Insertar el Componente</h3>
-    <p>Ubique el widget en su HTML. Puede personalizar los colores según el estado (Puebla/QRoo):</p>
-    <div class="code-container">
-        <pre>&lt;<span class="tag">rpp-chat-widget</span> 
-    <span class="attr">primary-color</span>=<span class="val">"#004a87"</span> 
-    <span class="attr">bot-name</span>=<span class="val">"Consultor SIQROO"</span>
-    <span class="attr">endpoint</span>=<span class="val">"http://10.4.3.28:3001"</span>
-    <span class="attr">app-url</span>=<span class="val">"http://10.4.3.28:3000/widget"</span>&gt;
-&lt;/<span class="tag">rpp-chat-widget</span>&gt;</pre>
-    </div>
+    <h3>2. Atributos disponibles</h3>
+    <table style="width:100%; border-collapse: collapse; margin-top: 1rem;">
+        <tr style="text-align:left; border-bottom: 2px solid #f1f5f9;">
+            <th style="padding: 0.5rem;">Atributo</th>
+            <th style="padding: 0.5rem;">Descripción</th>
+            <th style="padding: 0.5rem;">Valor por defecto</th>
+        </tr>
+        <tr style="border-bottom: 1px solid #f1f5f9;">
+            <td style="padding: 0.5rem;"><code>data-tenant-id</code></td>
+            <td style="padding: 0.5rem;">Identificador del tema/perfil a mostrar (ej. <code>rpp</code>, <code>ircep</code>, <code>centinela-ai</code>)</td>
+            <td style="padding: 0.5rem;"><code>general</code></td>
+        </tr>
+        <tr style="border-bottom: 1px solid #f1f5f9;">
+            <td style="padding: 0.5rem;"><code>data-primary-color</code></td>
+            <td style="padding: 0.5rem;">Color de marca del botón flotante y de la UI del chat</td>
+            <td style="padding: 0.5rem;"><code>#3b82f6</code></td>
+        </tr>
+        <tr>
+            <td style="padding: 0.5rem;"><code>data-title</code></td>
+            <td style="padding: 0.5rem;">Título mostrado en la cabecera del chat</td>
+            <td style="padding: 0.5rem;">Título configurado en el tema</td>
+        </tr>
+    </table>
 
     <div style="margin-top: 3rem; padding: 1.5rem; background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 8px;">
         <p style="margin: 0; font-weight: 600; color: #92400e;">💡 Nota Técnica:</p>
         <p style="margin: 0.5rem 0 0; font-size: 0.9rem; color: #b45309;">
-            El atributo <code>endpoint</code> debe apuntar a la URL pública donde está desplegado el backend de ConsultaRPP (Puerto 3001).
-            El atributo <code>app-url</code> apunta a la interfaz visual (Puerto 3000).
+            <code>src</code> debe apuntar al dominio público real donde está desplegado ConsultaSmart
+            (ej. <code>https://chat.casmart.internal</code>). El script detecta su propio origen a partir
+            de ese <code>src</code>, así que el widget funciona embebido en cualquier sitio de terceros sin
+            configuración adicional de CORS ni de endpoints separados.
+        </p>
+    </div>
+
+    <div style="margin-top: 1.5rem; padding: 1.5rem; background: #f0fdf4; border-left: 4px solid #22c55e; border-radius: 8px;">
+        <p style="margin: 0; font-weight: 600; color: #166534;">✅ Demo en vivo:</p>
+        <p style="margin: 0.5rem 0 0; font-size: 0.9rem; color: #15803d;">
+            Esta misma página tiene el widget real cargado abajo a la derecha — pruébelo.
         </p>
     </div>
 </main>
 
 <!-- INTEGRACIÓN DEL WIDGET (ACTIVO EN ESTA PÁGINA) -->
-<script src="http://10.4.3.28:3001/static/rpp-widget.js"></script>
-<rpp-chat-widget 
-    primary-color="#004a87" 
-    bot-name="Consultor Experto SIQROO"
-    endpoint="http://10.4.3.28:3001"
-    app-url="http://10.4.3.28:3000/widget">
-</rpp-chat-widget>
+<!-- src relativo: funciona sin cambios sin importar el dominio real que sirva esta página -->
+<script
+    src="/widget.js"
+    data-tenant-id="general"
+    data-primary-color="#004a87"
+    data-title="Consultor Experto ConsultaSmart"
+    async>
+</script>
 
 </body>
 </html>

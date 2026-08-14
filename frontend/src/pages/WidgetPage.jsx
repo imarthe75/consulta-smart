@@ -4,16 +4,28 @@ import { useAuthStore } from '../stores/authStore'
 import { RefreshCcw } from 'lucide-react'
 
 export default function WidgetPage() {
-    const { isAuthenticated, guestLogin } = useAuthStore()
+    const { guestLogin } = useAuthStore()
     const [initializing, setInitializing] = useState(true)
     const [error, setError] = useState(null)
 
     useEffect(() => {
         const initGuest = async () => {
             try {
-                if (!isAuthenticated) {
-                    await guestLogin()
-                }
+                // SIEMPRE se establece una sesión de invitado nueva, sin importar
+                // `isAuthenticated` -- el widget vive en el mismo origen
+                // (chat.casmart.internal) que el panel de administración, y
+                // comparte su localStorage. Si un admin inició sesión real ahí
+                // (aunque sea en otra pestaña) y luego visita un sitio de
+                // terceros con el widget embebido, `isAuthenticated` ya viene en
+                // `true` con SU token real -- el widget terminaba operando con
+                // esa sesión real (o, si ya expiró, disparando un 401 que un
+                // interceptor global redirigía a /login DENTRO del iframe,
+                // reemplazando el chat por la pantalla de login real).
+                // Incidente real 2026-08-14. El guest login es idempotente del
+                // lado del backend (siempre re-autentica contra el usuario
+                // dedicado del widget), así que no hay costo real en llamarlo
+                // siempre.
+                await guestLogin()
                 setInitializing(false)
             } catch (err) {
                 console.error("Error initializing widget guest session:", err)
@@ -22,7 +34,8 @@ export default function WidgetPage() {
             }
         }
         initGuest()
-    }, [isAuthenticated, guestLogin])
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
 
     if (initializing) {
         return (

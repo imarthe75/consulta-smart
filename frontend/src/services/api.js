@@ -43,8 +43,20 @@ api.interceptors.response.use(
     (error) => {
         if (error.response?.status === 401) {
             localStorage.removeItem('token')
-            const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
-            window.location.href = `${baseUrl}/login`
+            // El widget embebible (WidgetPage.jsx) vive en un <iframe> dentro de
+            // un sitio de terceros -- redirigir con window.location.href ahí
+            // reemplaza el chat completo por la pantalla de login real DENTRO
+            // del iframe (incidente real 2026-08-14: una sesión de admin
+            // expirada en este mismo origen disparaba esto y rompía el widget
+            // para cualquier visitante del sitio embebido). Dentro de un
+            // iframe simplemente se limpia el token y se deja que el propio
+            // flujo del widget (guest login) se recupere; el redirect solo
+            // aplica cuando la app corre como página completa.
+            const isEmbedded = window.self !== window.top
+            if (!isEmbedded) {
+                const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
+                window.location.href = `${baseUrl}/login`
+            }
         }
         return Promise.reject(error)
     }
@@ -74,14 +86,15 @@ export const authAPI = {
 }
 
 export const documentsAPI = {
-    upload: (file, category, onUploadProgress) =>
-        api.post('documents/upload',
-            { file, category },
-            {
-                headers: { 'Content-Type': 'multipart/form-data' },
-                onUploadProgress,
-            }
-        ),
+    // `formData` debe ser una instancia real de FormData (con .append('file', ...) ya
+    // hecho por el caller) -- antes se envolvía { file, category } en un objeto plano
+    // nuevo, lo cual rompe el body multipart (un FormData dentro de un objeto plano no
+    // serializa como archivo real; el backend recibía un 422 por campos faltantes).
+    upload: (formData, onUploadProgress) =>
+        api.post('documents/upload', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+            onUploadProgress,
+        }),
 
     list: (page = 1, limit = 10) =>
         api.get('documents', { params: { page, limit } }),

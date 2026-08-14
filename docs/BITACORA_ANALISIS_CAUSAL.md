@@ -144,3 +144,308 @@ producción (una prueba de integración que construya `SmartLLMRouter` con cada
 **Evidencia de verificación:** construcción real de `SmartLLMRouter` con cada
 variante de proveedor (`groq`, `ollama` rechazado correctamente) ejecutada dentro
 del contenedor real, sin mocks.
+
+---
+
+## 2026-08-13 — Generador de System Prompt "hablando de trámites" para un tema que no lo es, y fallback silencioso enmascarando que no hubo LLM real
+
+**Síntoma reportado por el usuario:** al generar el System Prompt para el tema
+"Centinela-AI" (plataforma SOC/SOAR de seguridad, sin relación con trámites
+gubernamentales) usando el Generador de System Prompt del panel admin, el
+resultado seguía hablando de "trámite o procedimiento exacto", "Registro de
+expediente oficial", "Documentación comprobatoria vigente" y "ventanillas
+digitales" — vocabulario burocrático de RPP/gobierno, no de un producto técnico.
+
+**Investigación (en capas, cada una destapó la siguiente):**
+
+1. **Capa 1 — meta-prompt sesgado:** `admin.py::generate_prompt` (el endpoint que
+   arma las instrucciones que se le mandan al LLM para que redacte el System
+   Prompt) tenía el checklist "obligatorio de 7 puntos" y las 3 metodologías
+   (CRAFT/ASPECCT/CREA) calcadas del patrón de bots de trámites RPP/IRCEP, con
+   frases como *"enumera los trámites/servicios/temas..."* hardcodeadas sin
+   importar el `sector`/`topic` recibido. Corregido a vocabulario neutro al
+   dominio, con instrucción explícita de derivar los temas válidos y los
+   ejemplos de una `description` funcional real (campo nuevo, separado del
+   nombre corto `topic`, que antes no existía y forzaba a repetir la
+   descripción completa hasta 5 veces dentro del mismo meta-prompt).
+
+2. **Capa 2 — LOV con default de tenant hardcodeado (mismo patrón que el
+   incidente de `chat_service.py` del 2026-07-22 arriba):** `AdminPage.jsx`
+   inicializaba los campos "Audiencia/Empresa/Sector" con los valores del
+   tenant RPP (`useState('Registro Público / Catastro')`, etc.), y el
+   `useEffect` de auto-selección por perfil no tenía una rama `else` — al
+   crear el perfil nuevo de Centinela-AI (no catalogado en la lista de 5
+   perfiles conocidos), el formulario se quedó silenciosamente con esos
+   valores de RPP sin que el administrador lo notara. Corregido: sin default
+   de tenant, rama `else` que resetea el LOV al cambiar a un perfil no
+   catalogado.
+
+3. **Capa 3 — la causa raíz real, más grave que las dos anteriores:** incluso
+   con el meta-prompt y el LOV ya corregidos, el System Prompt generado seguía
+   siendo *byte-idéntico* en estructura entre ejecuciones con temas distintos.
+   Investigado con logs reales del contenedor: Groq (único proveedor con key
+   válida desde el stopgap del 2026-07-22/23) tenía la cuota diaria de tokens
+   agotada (`429 - Rate limit... Limit 100000, Used 99578`), y
+   `SmartLLMRouter.chat()` — al no encontrar ningún proveedor disponible —
+   caía silenciosamente a la plantilla determinista offline (ver
+   `smart_llm_router.py:296-336`, la misma plantilla ya identificada como
+   causa raíz del incidente del 2026-07-22 de arriba). **Ninguno de los 3
+   "Generar" que el usuario ejecutó hoy (15:37, 16:38, 16:58) pasó realmente
+   por un LLM.** Agravante nuevo: `admin.py::generate_prompt` descartaba la
+   señal de fallback con `response_text, _ = await llm.chat(...)` — el panel
+   nunca informaba que el "prompt generado por IA" en realidad era una
+   plantilla fija. Mismo patrón de "falla silenciosa" que el incidente de LLM
+   personalizado por tema documentado arriba.
+
+4. **Capa 4 — al investigar por qué no había un segundo proveedor de
+   respaldo:** el usuario aportó 2 API keys nuevas (Gemini, NVIDIA NIM) en
+   `.env`, pero con nombres que el código no lee (`GEMINI_API_KEY` en vez de
+   `GOOGLE_API_KEY`; `NVIDIA_API_KEY` en vez de `NVIDIA_NIM_API_KEY` — ver
+   `config.py:88` y `:103`), cada una duplicada con 2 valores distintos, más
+   un tercer bloque `OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL` cuyo
+   endpoint (`https://integrate.api.nvidia.com/v1`), modelo
+   (`meta/llama-3-71b-instruct`) y formato de key (prefijo `nvapi-`, no
+   `sk-`) correspondían a NVIDIA, no a OpenAI real — confirmado con el
+   usuario: era la key de NVIDIA pegada por error bajo el nombre equivocado.
+
+**Causa raíz consolidada:** (a) meta-prompt con vocabulario de dominio
+hardcodeado a RPP; (b) UI con default de tenant hardcodeado sin rama de
+reseteo, mismo patrón que el incidente de `chat_service.py`; (c) fallback
+determinista silencioso combinado con el descarte de su propia señal de
+origen — el mismo patrón de "falla silenciosa" ya documentado dos veces en
+este archivo, ahora confirmado en un tercer punto del código; (d) variables
+de entorno con nombres incorrectos/duplicados/mal etiquetados que dejaban al
+sistema dependiendo de un único proveedor (Groq) sin redundancia real, pese a
+que el usuario ya había aportado credenciales válidas para dos más.
+
+**Corrección aplicada:**
+1. `admin.py`: meta-prompt reescrito sin vocabulario de trámite/gobierno
+   hardcodeado; nuevo campo `description` (descripción funcional, separado
+   del `topic` corto); `source`/`is_ai_generated` ya no se descartan y se
+   devuelven al frontend.
+2. `smart_llm_router.py`: plantilla de fallback offline reescrita para usar
+   la `description` real (cita el texto real del administrador en vez de
+   inventar "trámite/expediente") y para incluir un aviso explícito
+   (`<!-- AVISO: ... PLANTILLA DETERMINISTA OFFLINE ... -->`) dentro del
+   propio texto generado.
+3. `AdminPage.jsx`: LOV sin default de tenant, rama `else` de reseteo,
+   campo nuevo de "Descripción Funcional/Capacidades", y mensaje visible
+   (`type: 'error'`, no `'success'`) cuando `is_ai_generated === false`.
+4. `.env`: `GEMINI_API_KEY`→`GOOGLE_API_KEY`, `NVIDIA_API_KEY`→
+   `NVIDIA_NIM_API_KEY`, duplicados eliminados, bloque OpenAI mal etiquetado
+   descartado (documentado en el propio `.env` por qué). Ambas keys
+   verificadas con una llamada real (list-models, sin gastar tokens de
+   generación) antes de aplicarlas: **válidas las 2** — a diferencia del
+   stopgap del 2026-07-22/23, donde Gemini/NVIDIA/OpenRouter habían fallado
+   con errores de autenticación reales.
+5. `docker compose up -d --force-recreate backend` — recreación necesaria
+   porque (confirmado también en el incidente del 2026-07-22/23 de arriba)
+   ni `docker restart` ni el `--reload` de uvicorn releen `.env`.
+
+**Prevención de recurrencia:**
+- El aviso visible en el panel (`is_ai_generated === false`) aplica la misma
+  lección del incidente de Observabilidad del 2026-07-22: una falla de
+  proveedor debe ser visible de inmediato para el administrador, no
+  descubrirse por casualidad comparando dos generaciones que se ven
+  sospechosamente idénticas.
+- Con Groq + NVIDIA NIM + Gemini como proveedores reales simultáneos (antes
+  solo Groq), la ventana en la que **cualquier** fallo/rate-limit de un solo
+  proveedor tumba silenciosamente todo el sistema se reduce sustancialmente,
+  aunque no desaparece (Vertex sigue sin configurar; la causa raíz de Vault
+  —sin `VAULT_TOKEN` real— sigue abierta, ver R-09 en
+  `docs/REGISTRO_DE_RIESGOS.md`, actualizado en esta misma fecha).
+- Sigue sin existir una prueba automatizada que detecte que el meta-prompt
+  de `generate_prompt` cae en vocabulario de un dominio distinto al
+  `sector`/`topic` recibido — brecha abierta, candidata a `backend/tests/`.
+
+**Evidencia de verificación:**
+- Test de integración real (interceptando solo el límite externo del LLM,
+  sin mockear la lógica bajo prueba) confirmando que el meta-prompt generado
+  para Centinela-AI ya no contiene vocabulario de trámite y sí deriva los
+  temas válidos de la `description` real.
+- Logs reales del contenedor confirmando el `429` de Groq
+  (`Used 99578/100000`) y las 3 ejecuciones de hoy cayendo a
+  `fallback_offline`.
+- Llamada real (list-models) contra Gemini y NVIDIA NIM con las 4 variantes
+  de key encontradas en `.env`: **las 4 autenticaron correctamente**
+  (50 modelos en Gemini, 102 en NVIDIA NIM).
+- Prueba de extremo a extremo real, sin mocks, contra `SmartLLMRouter.chat()`
+  con Groq forzado a estado `RATE_LIMITED`: el failover real ocurrió hacia
+  `nvidia`, con una respuesta genuina del modelo (`"PRUEBA-FAILOVER-OK"`),
+  no la plantilla de respaldo.
+- `docker logs consulta-smart-backend` tras la recreación: `Application
+  startup complete` sin errores; `settings.GOOGLE_API_KEY`/
+  `settings.NVIDIA_NIM_API_KEY` confirmados presentes en el proceso real.
+
+---
+
+## 2026-08-14 — Caché desconectada del flujo real + expansión de proveedores (OpenRouter, Cerebras)
+
+**Síntoma reportado por el usuario:** "está tardando en responder, ¿es por la IA? ¿si está
+funcionando el caché?" — tras varias sesiones viendo timeouts/rate-limits en cascada
+entre Groq/NVIDIA/Gemini.
+
+**Hallazgo 1 — la caché híbrida (Redis + embeddings) nunca se usaba:**
+`ChatService._get_cache()` existía y funcionaba, pero **ninguna otra función del
+archivo la invocaba** — código muerto. Cada consulta, incluso una pregunta idéntica
+repetida palabra por palabra, pagaba el costo/latencia completo de RAG+LLM. Al revisar
+`cache_layer.py` para conectarla se encontró un segundo problema más serio: la clave de
+caché (`_generate_cache_key`) era solo `hash(query)`, **sin aislamiento por tenant** —
+de haberse conectado tal cual, la respuesta cacheada de una pregunta en el perfil `rpp`
+se habría servido textualmente a la misma pregunta hecha en `centinela-ai` (o cualquier
+otro tenant), sin relación de dominio alguna. `get_similar_match` tenía el mismo
+problema a nivel de búsqueda por embeddings (`redis.keys("cache_consulta_rpp:*")` sin
+filtro).
+
+**Corrección aplicada:**
+1. `cache_layer.py`: `_generate_cache_key`/`get_exact_match`/`get_similar_match`/
+   `store_response`/`get_with_fallback` ahora reciben `namespace` (= `profile_id`) y lo
+   incluyen en la clave de Redis y en el filtro de búsqueda por similitud — cada tenant
+   tiene su propio espacio de caché aislado.
+2. `chat_service.py::process_query`: se conecta la caché al inicio (antes de RAG+LLM) y
+   al final (tras obtener una respuesta real). Deliberadamente **excluida cuando hay
+   `conversation_history`** (preguntas de seguimiento) — una respuesta cacheada de una
+   pregunta aislada puede ser incorrecta si en realidad dependía del contexto previo de
+   la conversación.
+
+**Hallazgo 2 — el fallback offline se filtraba al chat normal (bug introducido por un
+fix anterior de este mismo día):** el cambio del 2026-08-13 que hace que
+`SmartLLMRouter.chat()` degrade a la plantilla CRAFT en vez de lanzar una excepción sin
+capturar (pensado para `admin.py::generate_prompt`) se aplicaba también cuando
+`chat_service.py` llamaba a `llm.chat()` para una consulta real de usuario — con los 3
+proveedores caídos, un usuario preguntando algo real sobre Centinela-AI recibía
+literalmente el texto *"Eres el Consultor e Integrador Experto de Sistema de Atención y
+Consultas..."* como si fuera la respuesta. **Corregido:** el fallback a plantilla ahora
+solo se activa si `kwargs` contiene `topic` (señal exclusiva del generador de prompts
+del admin); en cualquier otro caso se relanza la excepción para que
+`chat_service.py` la capture con su propio manejo honesto ya existente
+(`"Lo siento, ocurrió un error interno..."`).
+
+**Expansión de redundancia de proveedores:** el usuario aportó 5 keys nuevas
+(NVIDIA NIM, 3× OpenRouter, Cerebras), todas probadas con una llamada real de
+list-models antes de usarse — **las 5 autenticaron correctamente** (a diferencia del
+stopgap de julio, donde solo Groq funcionó de las 4 aportadas). Se agregaron
+`OpenRouterProvider` y `CerebrasProvider` (API compatible con OpenAI) a
+`llm_service.py`, con timeout explícito de 30s, y se conectaron a la cascada global de
+`SmartLLMRouter` (`groq → cerebras → vertex → nvidia → gemini → openrouter`), además de
+como `custom_provider` soportado para override por tema. Se reemplazó la key de NVIDIA
+por la nueva.
+
+**Limitación real descubierta al probar con una llamada de CHAT (no solo
+list-models):** las keys de OpenRouter y Cerebras autentican pero **las cuentas no
+tienen cuota utilizable para generar respuestas todavía** —
+OpenRouter: `429 Rate limit exceeded: free-models-per-day... Add 10 credits to unlock
+1000 free model requests per day`; Cerebras: `402 Payment required to access this
+resource`. El wiring de código se confirmó correcto (failover real cayendo
+correctamente hasta el último proveedor vivo en la cascada, incluido el manejo honesto
+de error cuando todos fallan), pero ninguno de los dos puede servir tráfico real hasta
+que el usuario agregue crédito/facturación a esas cuentas — fuera del alcance de este
+agente.
+
+**Evidencia de verificación:**
+- `router.priority_order == ['groq', 'cerebras', 'vertex', 'nvidia', 'gemini', 'openrouter']`,
+  `providers['cerebras']`/`providers['openrouter']` inicializados — confirmado real.
+- Prueba real forzando groq/cerebras/nvidia/gemini caídos: la cadena llegó hasta
+  `openrouter`, que respondió con el error real de cuota (`429`) documentado arriba —
+  no un mock.
+- Prueba real sin forzar nada: `source: groq`, `response: 'PRUEBA-CASCADA-REAL-OK'` —
+  confirma que en ese momento (post-cambios) un usuario real sí recibió respuesta.
+- **Actualización, minutos después:** al probar la caché end-to-end vía
+  `chat_service.process_query()`, los 5 proveedores fallaron simultáneamente en tiempo
+  real (Groq cuota, Cerebras sin crédito, NVIDIA timeout, Gemini saturado, OpenRouter
+  rate-limited) — coincidencia real de mala suerte, no un artefacto de la prueba.
+  Confirma en vivo el síntoma original del usuario ("está tardando, ¿es por la IA?").
+- Dado que ese intento no dejó nada real que cachear, se verificó la caché de forma
+  aislada contra Redis real (sin depender de que un LLM externo responda):
+  `store_response(query, respuesta, namespace="centinela-ai")` →
+  `get_exact_match(query, namespace="centinela-ai")` → HIT con la respuesta exacta;
+  `get_exact_match(query, namespace="general")` → MISS (aislamiento real, sin fuga
+  cross-tenant); `get_with_fallback()` end-to-end → HIT. Las 4 aserciones pasaron.
+
+## 2026-08-14 (continuación) — Widget embebido pidiendo login real, timeout del cliente más corto que la cascada del servidor, e ícono/color de marca ignorados por el chat real
+
+**Síntoma 1 (widget pidiendo login):** al embeber el widget de Centinela-AI en una
+página de terceros, el panel del widget mostraba la tarjeta real de Authentik
+"INICIAR SESIÓN CON CASMARTS ID" en vez de abrir un chat anónimo de invitado —
+pese a que la sesión de invitado ya existía como mecanismo (`/api/v1/auth/guest`)
+y se usó exitosamente al construir `widget.js` en la ronda anterior.
+
+**Causa raíz (doble):**
+1. `WidgetPage.jsx` solo invocaba `guestLogin()` si `!isAuthenticated`. El iframe del
+   widget carga desde el mismo origin que el panel admin (`chat.casmart.internal`),
+   así que comparte `localStorage` — si el administrador tenía sesión abierta en
+   otra pestaña del panel admin, el widget heredaba ese token de admin y se saltaba
+   el login de invitado, pero sin realmente completar un flujo de auth funcional
+   para el contexto del iframe.
+2. El interceptor de respuesta 401 global de `services/api.js` hacía
+   `window.location.href = '/login'` incondicionalmente ante cualquier 401 —
+   incluido dentro del iframe, secuestrando la navegación del sitio anfitrión de
+   terceros hacia la pantalla de login real de Authentik.
+
+**Corrección:** `WidgetPage.jsx` invoca `guestLogin()` siempre e incondicionalmente
+al montar (sin importar `isAuthenticated`); el interceptor de `api.js` no redirige
+cuando `window.self !== window.top` (contexto de iframe) — solo limpia el token
+local y deja que el flujo propio del widget muestre su error, si lo hay. Contrato
+formal: `[CS-013]` en `SPECS.md`.
+
+**Síntoma 2 (chat "colgado"):** el widget se quedaba indefinidamente en "Procesando
+consulta..." sin responder ni mostrar error, más allá de lo que un usuario
+esperaría de una respuesta lenta.
+
+**Causa raíz:** el timeout por-proveedor de `SmartLLMRouter.chat()`
+(`asyncio.wait_for(..., timeout=45.0)`, agregado en una ronda previa para un bug
+distinto de NVIDIA colgándose indefinidamente) permitía que una cascada de 2
+proveedores lentos en secuencia (ej. NVIDIA + Gemini, cada uno tardando cerca de
+su propio timeout interno antes de fallar) sumara hasta ~79s reales medidos en
+logs — más que el timeout HTTP del cliente axios (60s). El cliente abortaba la
+request y el backend seguía trabajando sin nadie escuchando la respuesta, dejando
+el spinner colgado sin error visible.
+
+**Corrección:** timeout por-proveedor reducido de 45.0s a 15.0s en
+`smart_llm_router.py::chat()`, dejando margen real para que incluso una cascada de
+varios proveedores lentos termine (con error honesto si corresponde) antes de que
+el cliente HTTP agote su propio budget.
+
+**Síntoma 3 (ícono/color ignorados):** el selector de íconos con nombre del panel
+admin (biblioteca de 12 íconos) y el color de marca (`primary_color`) se
+reflejaban correctamente en el "Probador Sandbox" de vista previa del propio
+panel admin, pero el chat real (tanto en modo escritorio como dentro del widget
+embebido) seguía mostrando el emoji 🤖 genérico y un header sin ningún
+tratamiento de color, sin importar la configuración guardada.
+
+**Causa raíz:** el Sandbox del admin era un mockup separado, escrito aparte, que
+sí implementaba la lógica de ícono con nombre — pero `ChatInterface.jsx` (el
+componente real compartido por el chat de escritorio y el widget embebido) nunca
+leía `profileConfig.icon`, y su header en modo widget usaba un fondo gris plano
+sin relación con `profileConfig.primary_color`. Los dos árboles de UI divergieron
+en silencio porque no compartían código.
+
+**Corrección:** extraída la biblioteca de íconos a
+`frontend/src/constants/chatIcons.js` (única fuente para `AdminPage.jsx` y
+`ChatInterface.jsx`); `ChatInterface.jsx` resuelve
+`ICON_MAP[profileConfig.icon] || Bot` en los 3 puntos donde se muestra el ícono
+del bot (header de escritorio, header del widget, avatar de estado vacío); el
+header del widget rediseñado para usar `profileConfig.primary_color` de fondo con
+una insignia de ícono, igualando el mockup del Sandbox. Contrato formal:
+`[CS-014]` en `SPECS.md`.
+
+**Prevención:** cuando un mockup/preview en el panel admin muestra el resultado
+correcto, no asumir que el componente real usado por usuarios lo hace igual — si
+son árboles de componentes separados, verificar explícitamente contra el
+componente real y, de encontrarse duplicación, extraer una única fuente de
+verdad compartida en vez de mantener las dos copias sincronizadas a mano.
+
+**Evidencia de verificación:**
+- `ChatInterfaceProfileIcon.test.jsx` (nuevo): perfil con `icon: 'ShieldCheck'`
+  renderiza `svg.lucide-shield-check`, nunca el emoji — 1/1 pasa.
+- `WidgetPageGuestSession.test.jsx` (nuevo): `guestLogin()` se invoca siempre
+  aunque `isAuthenticated` ya sea `true` por un token viejo; si `guestLogin()`
+  falla, se muestra el error del widget, nunca la pantalla de login real — 2/2
+  pasan.
+- `ChatInterfaceWidgetTheming.test.jsx` (existente, 3 pruebas): confirmó que el
+  rediseño del header agregó una segunda instancia de `svg.lucide-bot` al DOM
+  (insignia del header, además del avatar de estado vacío), volviendo ambiguo el
+  selector `querySelector('svg.lucide-bot')` original — corregido acotándolo a
+  `.w-16.h-16 svg.lucide-bot` (clase distintiva del avatar real bajo prueba).
+  3/3 pasan tras la corrección.
+- Las 3 suites juntas: `Test Files 3 passed (3) / Tests 6 passed (6)`.

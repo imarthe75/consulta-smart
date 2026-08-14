@@ -5,10 +5,11 @@ import { useChatStore } from '../stores/chatStore'
 import { useDocumentStore } from '../stores/documentStore'
 import { useAuthStore } from '../stores/authStore'
 import api, { chatAPI } from '../services/api'
-import { Send, Plus, Trash2, Edit2, Check, X, RefreshCcw, FileText, MessageSquare, LogOut, Search, Settings, BookOpen, Hash, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { Send, Plus, Trash2, Edit2, Check, X, RefreshCcw, FileText, MessageSquare, LogOut, Search, Settings, BookOpen, Hash, ThumbsUp, ThumbsDown, Bot as BotIcon } from 'lucide-react'
 import clsx from 'clsx'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { ICON_MAP } from '../constants/chatIcons'
 
 /**
  * ChatInterface — Componente principal del Chatbot Inteligente (RAG).
@@ -46,7 +47,7 @@ export default function ChatInterface({ isWidget = false }) {
     // Tenant y Perfil activos en la sesión del usuario
     const [tenantId, setTenantId] = useState('general')
     const [profileId, setProfileId] = useState('general')
-    
+
     // Configuración estética y de branding del perfil activo (título, logo, color principal)
     const [profileConfig, setProfileConfig] = useState({
         title: 'Asistente',
@@ -56,7 +57,7 @@ export default function ChatInterface({ isWidget = false }) {
         welcome_message: '¡Hola! ¿En qué puedo apoyarle hoy?',
         primary_color: '#3b82f6'
     })
-    
+
     // Estado local para recordar las valoraciones de feedback (thumbs up/down) enviadas
     const [feedbackState, setFeedbackState] = useState({})
 
@@ -299,7 +300,7 @@ export default function ChatInterface({ isWidget = false }) {
         if (!input.trim()) return
 
         let activeSessionId = currentSessionId;
-        
+
         // Crear sesión dinámica en la primera interacción si no existe
         if (!activeSessionId) {
             try {
@@ -385,6 +386,12 @@ export default function ChatInterface({ isWidget = false }) {
 
     const location = useLocation()
 
+    // Ícono real del perfil (biblioteca de íconos con nombre, ej. "Sparkles"),
+    // usando el MISMO mapa que el selector del panel admin -- antes el chat
+    // real ignoraba profileConfig.icon por completo y siempre mostraba 🤖
+    // sin importar lo elegido en el admin (incidente real 2026-08-14).
+    const ProfileIcon = ICON_MAP[profileConfig.icon] || BotIcon
+
     return (
         <div className="flex h-full w-full bg-white overflow-hidden">
             {/* Barra lateral unificada — Oculta en modo widget */}
@@ -393,14 +400,14 @@ export default function ChatInterface({ isWidget = false }) {
                     {/* Header con Logo y Selector de Perfiles */}
                     <div className="p-5 border-b border-gray-100 bg-white space-y-3">
                         <div className="flex items-center space-x-3">
-                            <div 
+                            <div
                                 className="w-10 h-10 rounded-xl shadow-sm flex items-center justify-center text-white font-bold transition-colors"
                                 style={{ backgroundColor: profileConfig.primary_color }}
                             >
                                 {profileConfig.logo_url ? (
                                     <img src={profileConfig.logo_url} alt="Logo" className="w-full h-full object-cover rounded-xl" />
                                 ) : (
-                                    <span className="text-lg">🤖</span>
+                                    <ProfileIcon size={20} />
                                 )}
                             </div>
                             <div className="flex-1 min-w-0">
@@ -516,14 +523,33 @@ export default function ChatInterface({ isWidget = false }) {
 
             {/* Ventana de Mensajes del Chat */}
             <div className="flex-1 flex flex-col h-full bg-white relative">
-                {/* Banner de Bienvenida o Estado */}
-                <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
-                    <div>
-                        <h2 className="text-sm font-bold text-slate-800">{profileConfig.title}</h2>
-                        <p className="text-xs text-slate-500">{profileConfig.welcome_message}</p>
+                {/* Banner de Bienvenida o Estado -- pintado con profileConfig.primary_color
+                    e ícono real del perfil (logo_url o ProfileIcon), igual que ya prometía
+                    el "Header Mockup" del Probador Sandbox en Vivo del panel admin. Antes
+                    este header real usaba un fondo gris plano fijo sin ningún color de marca
+                    ni ícono -- el sandbox (una maqueta aparte, no el componente real) sí lo
+                    mostraba bien, lo que hacía parecer que el color/ícono "no se aplicaban"
+                    cuando en realidad nunca se habían implementado aquí (incidente real
+                    2026-08-14). */}
+                <div
+                    className="p-4 flex items-center justify-between shadow shrink-0"
+                    style={{ backgroundColor: profileConfig.primary_color }}
+                >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center overflow-hidden shrink-0">
+                            {profileConfig.logo_url ? (
+                                <img src={profileConfig.logo_url} alt="Logo" className="w-full h-full object-cover" />
+                            ) : (
+                                <ProfileIcon size={18} className="text-white" />
+                            )}
+                        </div>
+                        <div className="min-w-0">
+                            <h2 className="text-sm font-bold text-white leading-tight truncate">{profileConfig.title}</h2>
+                            <p className="text-xs text-white/80 leading-tight mt-0.5 truncate">{profileConfig.welcome_message}</p>
+                        </div>
                     </div>
                     {loading && (
-                        <div className="flex items-center space-x-2 text-xs text-blue-600 font-semibold animate-pulse">
+                        <div className="flex items-center space-x-2 text-xs font-semibold text-white animate-pulse shrink-0">
                             <RefreshCcw size={14} className="animate-spin" />
                             <span>Consultando RAG...</span>
                         </div>
@@ -534,23 +560,27 @@ export default function ChatInterface({ isWidget = false }) {
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
                     {messages.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-center p-8 text-slate-400 space-y-4">
-                            <div 
-                                className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-sm"
-                                style={{ backgroundColor: `${profileConfig.primary_color}15`, color: profileConfig.primary_color }}
+                            <div
+                                className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-sm text-white"
+                                style={{ backgroundColor: profileConfig.primary_color }}
                             >
-                                🤖
+                                {profileConfig.logo_url ? (
+                                    <img src={profileConfig.logo_url} alt="Logo" className="w-full h-full object-cover rounded-2xl" />
+                                ) : (
+                                    <ProfileIcon size={32} />
+                                )}
                             </div>
                             <div className="max-w-md">
                                 <h3 className="text-base font-bold text-slate-800 mb-1">{profileConfig.welcome_message}</h3>
                                 <p className="text-xs text-slate-500">
-                                    Haz una consulta en lenguaje natural sobre trámites, requisitos o normativa oficial.
+                                    {profileConfig.subtitle || 'Escribe tu consulta para comenzar.'}
                                 </p>
                             </div>
                         </div>
                     ) : (
                         messages.map((msg, idx) => (
                             <div key={idx} className={clsx('flex w-full', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
-                                <div 
+                                <div
                                     className={clsx(
                                         'max-w-[90%] px-4 py-3 rounded-xl shadow-md border animate-in fade-in slide-in-from-bottom-2 duration-300',
                                         msg.role === 'user'

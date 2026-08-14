@@ -123,3 +123,68 @@ Este archivo actúa como la capa persistente de especificaciones de OpenSpec. To
   - Con Postgres inalcanzable durante los primeros ~20s de arranque (p.ej. host recién reiniciado y la ruta de red aún no lista) y disponible después, el backend debe terminar arrancando sin intervención manual.
 - **Casos de Borde:**
   - Incidente real que motivó este contrato: reinicio del host el 2026-08-10 dejó `consulta-smart-backend` con `docker ps` en estado "Up" durante 2 días sin servir tráfico (el reloader vivo, el worker muerto tras `OSError: [Errno 113] Connect call failed ('10.4.3.208', 5432)`), causando que el selector de "Tema Activo" y el resto del panel admin aparecieran vacíos sin ningún error 500 visible (nginx devolvía 502 por upstream inalcanzable). Corregido con restart manual + este retry. Ver `STATE.md` sesión 2026-08-12.
+
+### [CS-010] Insumos de generación de prompt persistidos por tema
+- **Estado:** `IMPLEMENTADO` (2026-08-14)
+- **Requisitos:**
+  - `chatbot_profiles` guarda `prompt_topic`, `prompt_description`, `prompt_target_audience`, `prompt_organization`, `prompt_sector` — los insumos reales con los que se generó el `system_prompt` vigente, no solo el resultado final.
+  - `admin.py::generate_prompt` deriva el checklist de requisitos obligatorios de `description` (texto libre del dominio real del tema), nunca de vocabulario fijo de un dominio específico (ej. "trámites").
+  - `AdminPage.jsx` carga estos 5 campos al seleccionar un tema existente y los reenvía al guardar; para un tema nuevo, todos arrancan vacíos (nunca con el último valor de otro tema visto en la sesión).
+- **Restricciones:**
+  - Los 5 campos son `Optional[str]` — temas creados antes de este contrato no los tienen y deben degradar a cadena vacía, no a un error.
+- **Criterios de Aceptación:**
+  - Editar un tema ya guardado y volver a generar su prompt reutiliza los insumos guardados, no obliga a re-escribirlos desde cero.
+  - Un tema de dominio no-trámite (ej. seguridad/SOC) genera un prompt sin vocabulario burocrático hardcodeado.
+- **Casos de Borde:**
+  - El perfil `general` es de solo lectura (ver gotcha en `CLAUDE.md`) y no participa de este flujo de guardado.
+
+### [CS-011] Alcance del fallback offline determinista del router LLM
+- **Estado:** `IMPLEMENTADO` (2026-08-14)
+- **Requisitos:**
+  - `SmartLLMRouter._build_offline_fallback` (plantilla CRAFT determinista) solo puede devolverse cuando la llamada es de generación de prompt (`"topic" in kwargs`, invocado desde `admin.py::generate_prompt`).
+  - En cualquier otro flujo (chat real de usuario, `chat_service.py::process_query`), si los 6 proveedores fallan o agotan su timeout, `SmartLLMRouter.chat()` debe relanzar la excepción — nunca devolver la plantilla offline como si fuera una respuesta real del asistente.
+- **Restricciones:**
+  - El manejador de excepción ya existente en `chat_service.py::process_query` (respuesta genérica `"Sistema de Emergencia"`, `error: True`) es el único punto autorizado para responder al usuario cuando el chat real falla — no duplicar lógica de fallback ahí ni en el router.
+- **Criterios de Aceptación:**
+  - Con los 6 proveedores simulando fallo, `generate_prompt` devuelve la plantilla offline con `is_ai_generated: false`; un chat real en la misma condición devuelve el mensaje de error genérico, nunca texto de plantilla.
+- **Casos de Borde:**
+  - Incidente real que motivó este contrato: un usuario real recibió el texto completo de la plantilla CRAFT ("Eres el Consultor e Integrador Experto de Sistema de Atención y Consultas...") como respuesta de chat cuando todos los proveedores fallaron — indistinguible de una respuesta real del asistente. Ver `STATE.md` sesión 2026-08-14.
+
+### [CS-012] Aislamiento de caché de respuestas por tenant (`namespace`)
+- **Estado:** `IMPLEMENTADO` (2026-08-14)
+- **Requisitos:**
+  - Toda función de `HybridCacheLayer` (`cache_layer.py`) que genere o busque una clave de caché debe recibir `namespace` (el `profile_id`/tema) y usarlo en la clave real (`cache_consulta_rpp:{namespace}:{hash}`) y en el patrón de escaneo (`cache_consulta_rpp:{namespace}:*`), nunca un escaneo global entre tenants.
+  - `chat_service.py::process_query` debe consultar la caché antes de invocar al LLM y almacenar la respuesta después, únicamente para consultas sin `conversation_history` y cuyo `provider` no sea `fallback_offline`.
+- **Restricciones:**
+  - `namespace` por defecto es `"default"` solo para compatibilidad de la firma de función — en el flujo real de `chat_service.py` siempre se pasa el `profile_id` explícito.
+- **Criterios de Aceptación:**
+  - Una consulta cacheada bajo el tema A produce MISS al consultarse bajo el tema B con el mismo texto, incluso siendo la misma pregunta literal.
+  - Verificado con prueba real contra Redis: HIT en el mismo namespace, MISS en namespace distinto.
+- **Casos de Borde:**
+  - Antes de este contrato, la caché completa nunca se invocaba desde `process_query` (código muerto) — no era solo un problema de aislamiento, era una feature sin conectar. Ver `STATE.md` sesión 2026-08-14.
+
+### [CS-013] Aislamiento de sesión del widget embebido frente al panel admin
+- **Estado:** `IMPLEMENTADO` (2026-08-14)
+- **Requisitos:**
+  - `WidgetPage.jsx` debe invocar `guestLogin()` siempre e incondicionalmente al montar, sin importar si ya existe un token en `localStorage` (compartido por origin con el panel admin en el mismo dominio).
+  - El interceptor de respuesta 401 de `services/api.js` no debe forzar `window.location.href` a `/login` cuando el contexto de ejecución es un iframe (`window.self !== window.top`) — debe limpiar el token local y dejar que el flujo del widget maneje el error, sin secuestrar la navegación del sitio anfitrión de terceros.
+- **Restricciones:**
+  - Este contrato aplica solo al contexto `isWidget=true`/ruta `/widget` — el panel admin en su propio contexto de ventana principal conserva el redirect normal a `/login`.
+- **Criterios de Aceptación:**
+  - Con un token de admin ya presente en `localStorage` (mismo origin), embeber el widget en una página de terceros muestra el chat de invitado anónimo, nunca la pantalla de login de Authentik.
+- **Casos de Borde:**
+  - Incidente real: el iframe del widget mostraba la tarjeta real "INICIAR SESIÓN CON CASMARTS ID" en vez de chat — causa raíz doble (guard condicional de `guestLogin` + interceptor global de 401 secuestrando el iframe). Ver `STATE.md` sesión 2026-08-14.
+
+### [CS-014] Biblioteca de íconos de marca compartida entre admin y chat real
+- **Estado:** `IMPLEMENTADO` (2026-08-14)
+- **Requisitos:**
+  - `frontend/src/constants/chatIcons.js` es la única fuente de verdad para `ICON_MAP`/`ICON_LIBRARY` (biblioteca de íconos con nombre seleccionables en el admin). Tanto `AdminPage.jsx` (selector + Sandbox de preview) como `ChatInterface.jsx` (chat real, escritorio y widget) deben importar desde ahí, nunca redefinir la lista localmente.
+  - `ChatInterface.jsx` debe resolver el ícono mostrado (header de escritorio, header del widget, avatar de estado vacío) como `ICON_MAP[profileConfig.icon] || Bot` cuando no hay `logo_url` configurado, en todos los puntos donde se muestra el ícono del bot.
+  - El header del widget embebido debe pintarse con `profileConfig.primary_color` de fondo (no un gris plano), con el ícono/logo en una insignia sobre ese fondo.
+- **Restricciones:**
+  - Ninguna.
+- **Criterios de Aceptación:**
+  - Cambiar el ícono de un tema en el admin (ej. a `ShieldCheck`) se refleja en el chat real (escritorio y widget embebido), no solo en el Sandbox de preview del panel admin.
+- **Casos de Borde:**
+  - Un rediseño de header que agrega una segunda instancia del mismo ícono al DOM (header + avatar de estado vacío) puede volver ambiguo un selector de prueba que asumía una sola instancia (`querySelector` singular) — acotar el selector a una clase distintiva del elemento bajo prueba (ver `ChatInterfaceWidgetTheming.test.jsx`, corregido esta sesión).
+  - Incidente real que motivó este contrato: el "Probador Sandbox" del admin (mockup separado, hardcodeado aparte) ya mostraba el ícono/color correctos, dando la falsa impresión de que el chat real también lo hacía. Ver `STATE.md` sesión 2026-08-14.

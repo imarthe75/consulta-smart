@@ -1,8 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useDocumentStore } from '../stores/documentStore'
-import { documentsAPI } from '../services/api'
 import api from '../services/api'
-import { Upload, X, AlertCircle, FileText, Layers, RefreshCw, CheckCircle2 } from 'lucide-react'
+import { Upload, X, AlertCircle, FileText, Layers, RefreshCw, CheckCircle2, Trash2 } from 'lucide-react'
 
 export default function DocumentUpload({ tenantId = 'all' }) {
     const [dragActive, setDragActive]       = useState(false)
@@ -13,7 +12,7 @@ export default function DocumentUpload({ tenantId = 'all' }) {
     const [reindexStatus, setReindexStatus] = useState({})
     const fileInputRef = useRef(null)
 
-    const { documents, addDocument, setDocuments, setLoading, setError, setUploadProgress, clearError } = useDocumentStore()
+    const { documents, setDocuments, setLoading, setError, setUploadProgress, clearError } = useDocumentStore()
 
     // Cargar perfiles de la BD para asociar el proyecto/tenant
     useEffect(() => {
@@ -38,61 +37,69 @@ export default function DocumentUpload({ tenantId = 'all' }) {
             setTargetTenant(tenantId)
         }
     }, [tenantId])
-    
+
     const [selectedDocType, setSelectedDocType] = useState('all')
 
     // Carga documentos desde el endpoint de admin para obtener métricas de salud del índice.
-    React.useEffect(() => {
-        const fetchDocs = async () => {
-            setLoading(true)
-            try {
-                const response = await api.get('admin/chatbot/documents')
-                const rawDocs = Array.isArray(response.data) ? response.data : []
-                let filtered = rawDocs
+    // Extraída de useEffect para poder reusarla también después de subir un archivo
+    // (antes, tras subir, se agregaba un documento LOCAL falso con id: Date.now() en
+    // vez de recargar la lista real -- eso hacía que la salud del índice se mostrara
+    // en 0% aunque el backend ya lo hubiera indexado de verdad, y que "Reintentar"
+    // fallara con 404 porque Date.now() nunca es un id real de la BD. Incidente real
+    // 2026-08-14: esto llevó a que el usuario, pensando que la subida había fallado,
+    // volviera a subir el mismo archivo, duplicándolo de verdad en la BD).
+    const fetchDocs = useCallback(async () => {
+        setLoading(true)
+        try {
+            const response = await api.get('admin/chatbot/documents')
+            const rawDocs = Array.isArray(response.data) ? response.data : []
+            let filtered = rawDocs
 
-                // 1. Filtrar por Aplicativo / Tenant
-                if (tenantId && tenantId !== 'all') {
-                    filtered = filtered.filter(d =>
-                        (d.category || '').toLowerCase() === tenantId.toLowerCase()
-                    )
-                }
-
-                // 2. Filtrar por Tipo/Categoría de Documento (reglamentos, guias, tramites, etc.)
-                if (selectedDocType && selectedDocType !== 'all') {
-                    filtered = filtered.filter(d => {
-                        const docMetaType = (d.doc_metadata?.doc_type || d.doc_metadata?.category || '').toLowerCase()
-                        const titleLower = (d.title || '').toLowerCase()
-                        if (selectedDocType === 'reglamentos') return docMetaType.includes('reglamento') || titleLower.includes('legislacion') || titleLower.includes('oficial')
-                        if (selectedDocType === 'guias') return docMetaType.includes('guia') || titleLower.includes('guia') || titleLower.includes('diccionario')
-                        if (selectedDocType === 'tramites') return docMetaType.includes('tramite') || titleLower.includes('procedimiento') || titleLower.includes('requisito') || titleLower.includes('acto')
-                        if (selectedDocType === 'costos') return docMetaType.includes('costo') || titleLower.includes('costo') || titleLower.includes('derechos') || titleLower.includes('arancel')
-                        return docMetaType === selectedDocType.toLowerCase()
-                    })
-                }
-
-                // Mapear al formato del store preservando los metadatos de salud
-                setDocuments(filtered.map(doc => ({
-                    id:                  doc.id,
-                    name:                doc.title || 'Documento RAG',
-                    size:                doc.token_count || 1024,
-                    category:            doc.category || 'general',
-                    doc_type:            doc.doc_metadata?.doc_type || 'Procedimiento / Normativa',
-                    uploadedAt:          doc.created_at || new Date().toISOString(),
-                    status:              doc.status || 'indexed',
-                    // Métricas de salud del índice vectorial
-                    chunk_count:         doc.chunk_count || 0,
-                    embedded_chunk_count: doc.embedded_chunk_count || 0,
-                    health_pct:          doc.health_pct ?? 0,
-                    processing_error:    doc.processing_error || null,
-                })))
-            } catch (err) {
-                console.error("Error al cargar documentos desde admin:", err)
-            } finally {
-                setLoading(false)
+            // 1. Filtrar por Aplicativo / Tenant
+            if (tenantId && tenantId !== 'all') {
+                filtered = filtered.filter(d =>
+                    (d.category || '').toLowerCase() === tenantId.toLowerCase()
+                )
             }
+
+            // 2. Filtrar por Tipo/Categoría de Documento (reglamentos, guias, tramites, etc.)
+            if (selectedDocType && selectedDocType !== 'all') {
+                filtered = filtered.filter(d => {
+                    const docMetaType = (d.doc_metadata?.doc_type || d.doc_metadata?.category || '').toLowerCase()
+                    const titleLower = (d.title || '').toLowerCase()
+                    if (selectedDocType === 'reglamentos') return docMetaType.includes('reglamento') || titleLower.includes('legislacion') || titleLower.includes('oficial')
+                    if (selectedDocType === 'guias') return docMetaType.includes('guia') || titleLower.includes('guia') || titleLower.includes('diccionario')
+                    if (selectedDocType === 'tramites') return docMetaType.includes('tramite') || titleLower.includes('procedimiento') || titleLower.includes('requisito') || titleLower.includes('acto')
+                    if (selectedDocType === 'costos') return docMetaType.includes('costo') || titleLower.includes('costo') || titleLower.includes('derechos') || titleLower.includes('arancel')
+                    return docMetaType === selectedDocType.toLowerCase()
+                })
+            }
+
+            // Mapear al formato del store preservando los metadatos de salud
+            setDocuments(filtered.map(doc => ({
+                id:                  doc.id,
+                name:                doc.title || 'Documento RAG',
+                size:                doc.token_count || 1024,
+                category:            doc.category || 'general',
+                doc_type:            doc.doc_metadata?.doc_type || 'Procedimiento / Normativa',
+                uploadedAt:          doc.created_at || new Date().toISOString(),
+                status:              doc.status || 'indexed',
+                // Métricas de salud del índice vectorial
+                chunk_count:         doc.chunk_count || 0,
+                embedded_chunk_count: doc.embedded_chunk_count || 0,
+                health_pct:          doc.health_pct ?? 0,
+                processing_error:    doc.processing_error || null,
+            })))
+        } catch (err) {
+            console.error("Error al cargar documentos desde admin:", err)
+        } finally {
+            setLoading(false)
         }
+    }, [tenantId, selectedDocType, setDocuments, setLoading])
+
+    useEffect(() => {
         fetchDocs()
-    }, [tenantId, selectedDocType])
+    }, [fetchDocs])
 
     const categories = [
         { value: 'all', label: 'Todos los tipos (Mostrar Todo)' },
@@ -122,7 +129,7 @@ export default function DocumentUpload({ tenantId = 'all' }) {
         if (!file) return
         const ext = file.name.split('.').pop().toLowerCase()
         const allowedExts = ['pdf', 'doc', 'docx', 'txt', 'md', 'png', 'jpg', 'jpeg']
-        
+
         if (!allowedExts.includes(ext)) {
             setError(`Formato .${ext} no permitido. Formatos aceptados: PDF, Word (DOC/DOCX), TXT, Markdown (MD) e Imágenes (PNG, JPG).`)
             return
@@ -162,24 +169,31 @@ export default function DocumentUpload({ tenantId = 'all' }) {
         try {
             const formData = new FormData()
             formData.append('file', selectedFile)
+            formData.append('title', selectedFile.name)
+            // `category` es el campo que asocia el documento al tenant en el backend
+            // (admin.py::upload_chatbot_document) -- no confundir con el estado local
+            // `category` de este componente, que en realidad guarda el TIPO de
+            // documento (reglamentos/guias/etc), mapeado abajo a `doc_type`.
             formData.append('category', targetTenant || 'general')
-            formData.append('tenant_id', targetTenant)
             formData.append('doc_type', category || 'reglamentos')
 
-            await documentsAPI.upload(formData, targetTenant || 'general', (progressEvent) => {
-                const percentCompleted = Math.round(
-                    (progressEvent.loaded * 100) / progressEvent.total
-                )
-                setUploadProgress(percentCompleted)
+            // Se llama directo al endpoint real de indexado RAG por tenant
+            // (admin/chatbot/documents/upload) -- NO documentsAPI.upload(), que apunta
+            // a /api/v1/documents/upload (documents.py), un pipeline de Celery aparte
+            // y ya documentado como roto (workers detenidos, ver CLAUDE.md).
+            await api.post('admin/chatbot/documents/upload', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+                onUploadProgress: (progressEvent) => {
+                    const percentCompleted = Math.round(
+                        (progressEvent.loaded * 100) / progressEvent.total
+                    )
+                    setUploadProgress(percentCompleted)
+                },
             })
 
-            addDocument({
-                id: Date.now(),
-                name: selectedFile.name,
-                size: selectedFile.size,
-                category: targetTenant || category,
-                uploadedAt: new Date().toISOString(),
-            })
+            // Recarga la lista real desde el backend en vez de fabricar un documento
+            // local falso -- ver comentario en fetchDocs() arriba.
+            await fetchDocs()
 
             setSelectedFile(null)
             if (fileInputRef.current) fileInputRef.current.value = ''
@@ -188,6 +202,20 @@ export default function DocumentUpload({ tenantId = 'all' }) {
             setError('Error al cargar archivo: ' + err.message)
         } finally {
             setLoading(false)
+        }
+    }
+
+    /**
+     * handleDeleteDocument — borra un documento y sus vectores del RAG (con confirmación).
+     */
+    const handleDeleteDocument = async (docId, docName) => {
+        if (!window.confirm(`¿Eliminar "${docName}" y todos sus fragmentos vectorizados del RAG? Esta acción no se puede deshacer.`)) return
+        try {
+            await api.delete(`admin/chatbot/documents/${docId}`)
+            setDocuments(prev => prev.filter(d => d.id !== docId))
+        } catch (err) {
+            console.error('[Delete] Error:', err)
+            setError('No se pudo eliminar el documento.')
         }
     }
 
@@ -225,7 +253,7 @@ export default function DocumentUpload({ tenantId = 'all' }) {
 
     return (
         <div className="space-y-6">
-            
+
             {/* Proyecto / Tenant Selector obligatorio */}
             <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
@@ -438,6 +466,13 @@ export default function DocumentUpload({ tenantId = 'all' }) {
                                                 : <AlertCircle size={10} />}
                                             {hp >= 95 ? 'Indexado' : hp > 0 ? `Parcial ${hp}%` : 'Sin embedding'}
                                         </span>
+                                        <button
+                                            onClick={() => handleDeleteDocument(doc.id, doc.name)}
+                                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition shrink-0"
+                                            title="Eliminar documento y sus vectores del RAG"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
                                     </div>
 
                                     {/* Barra de salud del índice — Renderizada para todos los documentos */}
@@ -481,7 +516,7 @@ export default function DocumentUpload({ tenantId = 'all' }) {
                                                         : reindexDone
                                                             ? <><CheckCircle2 size={10} />Completado</>
                                                             : reindexError
-                                                                ? <><AlertCircle size={10} />Error</>   
+                                                                ? <><AlertCircle size={10} />Error</>
                                                                 : <><RefreshCw size={10} />Reintentar</>}
                                                 </button>
                                             )}

@@ -13,7 +13,7 @@ from app.domain.entities import DocumentStatus, DocumentCategory
 class UserModel(Base):
     """ORM Model para User"""
     __tablename__ = "users"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid7()))
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=True) # Hash de contraseña opcional si se usa autenticación local
@@ -22,11 +22,11 @@ class UserModel(Base):
     roles = Column(JSON, default=["user"])
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Relationships
     documents = relationship("DocumentModel", back_populates="user", lazy="select")
     chat_sessions = relationship("ChatSessionModel", back_populates="user", lazy="select")
-    
+
     __table_args__ = (
         Index('idx_user_email', 'email'),
         Index('idx_user_username', 'username'),
@@ -36,7 +36,7 @@ class UserModel(Base):
 class DocumentModel(Base):
     """ORM Model para Document"""
     __tablename__ = "documents"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid7()))
     title = Column(String(255), nullable=False)
     category = Column(String(50), nullable=False, index=True)
@@ -60,11 +60,11 @@ class DocumentModel(Base):
     processing_completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Relationships
     user = relationship("UserModel", back_populates="documents")
     chunks = relationship("DocumentChunkModel", back_populates="document", lazy="select", cascade="all, delete-orphan")
-    
+
     __table_args__ = (
         Index('idx_document_user_id', 'user_id'),
         Index('idx_document_status', 'status'),
@@ -75,7 +75,7 @@ class DocumentModel(Base):
 class DocumentChunkModel(Base):
     """ORM Model para Document Chunks"""
     __tablename__ = "document_chunks"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid7()))
     document_id = Column(String(36), ForeignKey("documents.id"), nullable=False, index=True)
     chunk_number = Column(Integer, nullable=False)
@@ -86,10 +86,10 @@ class DocumentChunkModel(Base):
     embedding = Column(Vector(384), nullable=True) # SentenceTransformer all-MiniLM-L6-v2 (384 dimensions)
     doc_metadata = Column(JSON, default={})
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
+
     # Relationships
     document = relationship("DocumentModel", back_populates="chunks")
-    
+
     __table_args__ = (
         Index('idx_chunk_document_id', 'document_id'),
     )
@@ -114,7 +114,7 @@ class VectorEmbeddingModel(Base):
 class ChatSessionModel(Base):
     """ORM Model para Chat Session"""
     __tablename__ = "chat_sessions"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid7()))
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     title = Column(String(255), nullable=False)
@@ -122,11 +122,11 @@ class ChatSessionModel(Base):
     total_tokens_used = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Relationships
     user = relationship("UserModel", back_populates="chat_sessions")
     messages = relationship("ChatMessageModel", back_populates="session", lazy="select", cascade="all, delete-orphan")
-    
+
     __table_args__ = (
         Index('idx_session_user_id', 'user_id'),
     )
@@ -135,7 +135,7 @@ class ChatSessionModel(Base):
 class ChatMessageModel(Base):
     """ORM Model para Chat Messages"""
     __tablename__ = "chat_messages"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid7()))
     session_id = Column(String(36), ForeignKey("chat_sessions.id"), nullable=False, index=True)
     role = Column(String(20), nullable=False)  # user, assistant, system
@@ -145,10 +145,10 @@ class ChatMessageModel(Base):
     feedback_text = Column(Text, nullable=True)
     tokens_used = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
+
     # Relationships
     session = relationship("ChatSessionModel", back_populates="messages")
-    
+
     __table_args__ = (
         Index('idx_message_session_id', 'session_id'),
     )
@@ -157,7 +157,7 @@ class ChatMessageModel(Base):
 class SystemConfigModel(Base):
     """ORM Model para configuraciones dinámicas del sistema (Prompts, etc)"""
     __tablename__ = "system_configs"
-    
+
     key = Column(String(100), primary_key=True)
     value = Column(Text, nullable=False)
     description = Column(String(255), nullable=True)
@@ -183,6 +183,15 @@ class ChatbotProfileModel(Base):
     top_p = Column(Float, nullable=True, default=0.9)
     forbidden_topics = Column(Text, nullable=True, default="deportes, futbol, cine, cocina, politica, chismes, entretenimiento, demandas legales, cultura general, tesis academicas, redaccion de documentos legales, asesoria juridica personal")
     rejection_message = Column(Text, nullable=True, default="Mi función está limitada exclusivamente a la asesoría sobre los trámites y servicios de este tema. No puedo asistirle con temas ajenos.")
+    # Insumos del Generador de System Prompt (admin.py::generate_prompt), separados del
+    # resultado (system_prompt de arriba). Antes NO se persistían -- eran solo estado
+    # efímero del formulario en AdminPage.jsx, por lo que se perdían al recargar o al
+    # volver a seleccionar el tema (incidente 2026-08-13, ver BITACORA_ANALISIS_CAUSAL.md).
+    prompt_topic = Column(String(500), nullable=True)  # nombre corto del tema
+    prompt_description = Column(Text, nullable=True)  # descripción funcional/capacidades
+    prompt_target_audience = Column(String(255), nullable=True)
+    prompt_organization = Column(String(255), nullable=True)
+    prompt_sector = Column(String(255), nullable=True)
     llm_provider = Column(String(50), nullable=True, default="default")  # 'default', 'groq', 'openai', 'anthropic', 'mistral', 'gemini', 'nvidia', 'ollama'
     llm_model = Column(String(100), nullable=True)     # e.g., 'llama3-70b-8192', 'gpt-4o', 'gemini-1.5-pro'
     custom_api_key = Column(String(255), nullable=True) # API key enmascarada / personalizada por tema

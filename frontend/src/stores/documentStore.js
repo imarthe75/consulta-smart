@@ -6,7 +6,15 @@ export const useDocumentStore = create((set) => ({
     error: null,
     uploadProgress: 0,
 
-    setDocuments: (documents) => set({ documents }),
+    // Acepta un array directo O una función actualizadora (state => newState), igual
+    // que React.setState -- DocumentUpload.jsx::handleReindex la llama como
+    // setDocuments(prev => prev.map(...)), lo cual con un setter plano guardaba la
+    // función misma como valor de `documents` en vez del array mapeado.
+    setDocuments: (documentsOrUpdater) => set((state) => ({
+        documents: typeof documentsOrUpdater === 'function'
+            ? documentsOrUpdater(state.documents)
+            : documentsOrUpdater
+    })),
 
     addDocument: (document) => {
         set((state) => ({

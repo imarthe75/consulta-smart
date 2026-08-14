@@ -30,7 +30,7 @@ class ConfigResponse(BaseModel):
     key: str
     value: str
     description: Optional[str] = None
-    
+
 class PromptGenerateRequest(BaseModel):
     topic: str
     context: str
@@ -40,6 +40,10 @@ class PromptGenerateRequest(BaseModel):
     sector: Optional[str] = None
     forbidden_topics: Optional[str] = None
     rejection_message: Optional[str] = None
+    # Descripción funcional/de capacidades, separada del nombre corto del tema (`topic`).
+    # Si viene vacía, se usa `topic` como fallback (compatibilidad con temas ya existentes
+    # que meten toda la descripción larga directamente en `topic`).
+    description: Optional[str] = None
 
 @router.get("/configs/{key}", response_model=ConfigResponse)
 async def get_config(
@@ -83,18 +87,29 @@ async def generate_prompt(
     """
     llm = await get_smart_router()
     method = (request.methodology or "craft").lower()
-    
-    target_info = f"Usuarios Objetivo: {request.target_audience or 'Ciudadanos y usuarios generales'}. "
-    org_info = f"Dependencia/Oficina: {request.organization or 'Gobierno'}. "
-    sector_info = f"Sector: {request.sector or 'Público/Institucional'}. "
+
+    target_info = f"Usuarios Objetivo: {request.target_audience or 'Usuarios generales'}. "
+    org_info = f"Organización: {request.organization or 'la organización'}. "
+    sector_info = f"Sector/Industria: {request.sector or 'General'}. "
     context_details = f"{target_info}{org_info}{sector_info}"
+
+    # `topic` es el nombre corto del tema (ej. "Centinela-AI"); `description` es la
+    # descripción funcional/de capacidades (puede ser larga). Si no viene `description`,
+    # se asume que `topic` ya trae el texto completo (patrón usado antes de este campo).
+    functional_description = (
+        request.description.strip()
+        if request.description and request.description.strip()
+        else request.topic
+    )
+    description_block = f"DESCRIPCIÓN FUNCIONAL / CAPACIDADES DEL TEMA:\n{functional_description}\n\n"
 
     forbidden_line = (
         f"ya configurados por el administrador ({request.forbidden_topics.strip()}) más cualquier otro "
         f"tema evidentemente ajeno al dominio"
         if request.forbidden_topics and request.forbidden_topics.strip()
         else "que sean evidentemente ajenos al dominio del tema (ej. entretenimiento, cultura general, "
-             "deportes, asesoría jurídica personal no relacionada, redacción de documentos ajenos al trámite)"
+             "deportes, asesoría legal/personal no relacionada, o cualquier tema fuera del alcance "
+             "descrito en el contexto)"
     )
     rejection_line = (
         f"Usa EXACTAMENTE esta frase, ya definida por el administrador: \"{request.rejection_message.strip()}\""
@@ -114,20 +129,28 @@ async def generate_prompt(
         f"encabezado tipo '## MANUALES TÉCNICOS OFICIALES', el bot DEBE basar su respuesta en esa "
         f"información y nunca rechazar una consulta válida del dominio si los documentos la responden, "
         f"aunque sea de forma parcial.\n"
-        f"1. TEMAS VÁLIDOS: enumera en una lista concreta (no genérica) los trámites/servicios/temas "
-        f"específicos que el bot SÍ puede atender dentro de '{request.topic}'.\n"
+        f"1. TEMAS VÁLIDOS: enumera en una lista concreta (NO genérica ni prestada de otro dominio) "
+        f"los temas/funcionalidades/capacidades específicas que el bot SÍ puede atender, extraídas "
+        f"LITERALMENTE de la DESCRIPCIÓN FUNCIONAL / CAPACIDADES indicada arriba. "
+        f"Si esa descripción corresponde a un producto o plataforma técnica, la lista debe reflejar "
+        f"sus funcionalidades reales (p. ej. tipos de análisis que realiza, componentes que gestiona, "
+        f"acciones que ejecuta) y NO una lista de trámites administrativos salvo que la descripción "
+        f"realmente describa un trámite.\n"
         f"2. TEMAS PROHIBIDOS: enumera explícitamente los temas que el bot DEBE rechazar de forma "
         f"educada, {forbidden_line}. Aclara que el rechazo aplica aunque la pregunta intente disfrazarse "
         f"mencionando el nombre del tema de forma engañosa.\n"
         f"3. NO CONOCIMIENTO AJENO: declara explícitamente que el bot tiene PROHIBIDO responder sobre "
         f"instituciones, jurisdicciones o dominios distintos al definido, aunque el usuario insista.\n"
-        f"4. LENGUAJE/TONO: define un tono coherente con la audiencia ({request.target_audience or 'Ciudadanía'}) "
-        f"y la dependencia ({request.organization or 'Institución'}).\n"
+        f"4. LENGUAJE/TONO: define un tono y vocabulario coherentes con la audiencia "
+        f"({request.target_audience or 'Usuarios generales'}) y el sector "
+        f"({request.sector or 'General'}) de {request.organization or 'la organización'}. Usa "
+        f"terminología propia de ese sector — NO impongas vocabulario burocrático/gubernamental "
+        f"(trámite, expediente, ventanilla, dependencia) si el sector o el tema no lo son.\n"
         f"5. RESPUESTA DE RECHAZO: define la frase EXACTA que debe usarse para rechazar consultas fuera "
         f"de dominio. {rejection_line}\n"
         f"6. FORMATO: exige viñetas o numeración, SIN líneas en blanco entre elementos de lista, "
-        f"respuestas compactas y densas, y prohíbe citar sitios no oficiales (solo portales de gobierno "
-        f"o institucionales cuando aplique)."
+        f"respuestas compactas y densas, y prohíbe citar fuentes no oficiales (solo documentación "
+        f"interna, portales institucionales o de gobierno cuando el dominio realmente lo amerite)."
     )
 
     if request.context == "consulta":
@@ -135,66 +158,82 @@ async def generate_prompt(
             meta_instruction = (
                 f"Eres un **Ingeniero de Prompts Senior (Prompt Engineer)** experto en diseñar System Prompts maestros "
                 f"para chatbots institucionalizados basados en RAG.\n\n"
-                f"Tu tarea es construir un **System Prompt maestro** para el tema: '{request.topic}'.\n"
+                f"Tu tarea es construir un **System Prompt maestro** para el tema: '{request.topic}'.\n\n"
+                f"{description_block}"
                 f"CONTEXTO ADICIONAL:\n{context_details}\n\n"
                 f"DEBES estructurar el System Prompt utilizando la **Metodología CRAFT** y usando **etiquetas delimitadoras tipo XML** (<contexto>, <rol>, <instrucciones>, <formato>, <reglas>, <ejemplos>):\n"
-                f"- **C - Contexto (<contexto>):** Describe el entorno ({request.organization or 'Institución'}), el perfil de usuarios ({request.target_audience or 'Ciudadanía'}), el ámbito de servicios y la prioridad estricta a los manuales RAG bajo '## MANUALES TÉCNICOS OFICIALES'.\n"
-                f"- **R - Rol / Persona (<rol>):** Identidad profesional, nivel de autoridad, empatía y especialidad técnica del bot.\n"
-                f"- **A - Acción / Tarea (<instrucciones>):** Instructivo paso a paso de atención, consulta en manuales indexados y orientación clara.\n"
+                f"- **C - Contexto (<contexto>):** Describe el entorno ({request.organization or 'la organización'}), el perfil de usuarios ({request.target_audience or 'Usuarios generales'}), el ámbito de temas/capacidades cubiertas (extraído literalmente de la DESCRIPCIÓN FUNCIONAL indicada arriba, NO de CONTEXTO ADICIONAL que solo trae audiencia/organización/sector) y la prioridad estricta a los manuales RAG bajo '## MANUALES TÉCNICOS OFICIALES'.\n"
+                f"- **R - Rol / Persona (<rol>):** Identidad profesional, nivel de autoridad, empatía y especialidad técnica del bot, coherente con el sector ({request.sector or 'General'}).\n"
+                f"- **A - Acción / Tarea (<instrucciones>):** Instructivo paso a paso para resolver la consulta del usuario apoyándose en los manuales indexados y dando una respuesta clara y accionable.\n"
                 f"- **F - Formato (<formato>):** Estructura visual clara de respuestas (Markdown, viñetas simples, negritas, sin párrafos densos).\n"
-                f"- **T - Tono y Restricciones (<reglas>):** Tono de voz adaptado al usuario ({request.target_audience or 'Ciudadanía'}), vocabulario a evitar, cero alucinaciones y temas fuera de dominio prohibidos.\n"
-                f"- **Few-Shot Prompting (<ejemplos>):** Incluye 2 ejemplos concisos y representativos de Pregunta/Respuesta adaptados a la dependencia.\n\n"
+                f"- **T - Tono y Restricciones (<reglas>):** Tono de voz adaptado al usuario ({request.target_audience or 'Usuarios generales'}), vocabulario a evitar, cero alucinaciones y temas fuera de dominio prohibidos.\n"
+                f"- **Few-Shot Prompting (<ejemplos>):** Incluye 2 ejemplos concisos de Pregunta/Respuesta que reflejen consultas REALES que un usuario haría sobre los temas/funcionalidades descritos en la DESCRIPCIÓN FUNCIONAL indicada arriba (no preguntas genéricas de trámites salvo que la descripción realmente sea de un trámite).\n\n"
                 f"Responde ÚNICAMENTE con el System Prompt final generado en formato Markdown y XML. No agregues intros ni explicaciones extra."
             )
         elif method == "aspecct":
             meta_instruction = (
                 f"Eres un **Ingeniero de Prompts Senior (Prompt Engineer)** experto en diseñar System Prompts de arquitectura empresarial.\n\n"
-                f"Construye un **System Prompt completo** sobre el tema: '{request.topic}' para {context_details} siguiendo el **Framework ASPECCT** y utilizando **etiquetas XML**:\n"
-                f"- **A - Acción (<instrucciones>):** Tarea central y objetivo del bot.\n"
+                f"Construye un **System Prompt completo** sobre el tema: '{request.topic}' siguiendo el **Framework ASPECCT** y utilizando **etiquetas XML**.\n\n"
+                f"{description_block}"
+                f"CONTEXTO ADICIONAL:\n{context_details}\n\n"
+                f"- **A - Acción (<instrucciones>):** Tarea central y objetivo del bot, basada en la DESCRIPCIÓN FUNCIONAL indicada arriba.\n"
                 f"- **S - Steps (<pasos>):** Flujo ordenado paso a paso para analizar consultas y documentos RAG.\n"
                 f"- **P - Persona (<rol>):** Rol profesional y autoridad técnica.\n"
-                f"- **E - Ejemplos (<ejemplos>):** Ejemplos concisos Few-Shot (Pregunta/Respuesta).\n"
-                f"- **C - Contexto (<contexto>):** Dominio institucional ({request.organization or 'Dependencia'}), manuales RAG e interacción del usuario ({request.target_audience or 'Ciudadanos'}).\n"
+                f"- **E - Ejemplos (<ejemplos>):** Ejemplos concisos Few-Shot (Pregunta/Respuesta) basados en la DESCRIPCIÓN FUNCIONAL indicada arriba.\n"
+                f"- **C - Contexto (<contexto>):** Dominio de la organización ({request.organization or 'la organización'}), sector ({request.sector or 'General'}), manuales RAG e interacción del usuario ({request.target_audience or 'Usuarios generales'}).\n"
                 f"- **T - Tono/Tipo (<formato> y <reglas>):** Tono ejecutivo, prohibición de alucinaciones y restricciones de salida.\n\n"
                 f"Responde ÚNICAMENTE con el System Prompt final generado."
             )
         elif method == "crea":
             meta_instruction = (
                 f"Eres un **Ingeniero de Prompts Senior (Prompt Engineer)** experto en diseñar System Prompts maestros.\n\n"
-                f"Construye un **System Prompt impecable** sobre el tema: '{request.topic}' para {context_details} aplicando la **Metodología CREA** y etiquetas XML:\n"
-                f"- **C - Contexto (<contexto>):** Antecedentes, entidad ({request.organization or 'Gobierno'}) y consumo estricto de RAG.\n"
+                f"Construye un **System Prompt impecable** sobre el tema: '{request.topic}' aplicando la **Metodología CREA** y etiquetas XML.\n\n"
+                f"{description_block}"
+                f"CONTEXTO ADICIONAL:\n{context_details}\n\n"
+                f"- **C - Contexto (<contexto>):** Antecedentes, organización ({request.organization or 'la organización'}), sector ({request.sector or 'General'}) y consumo estricto de RAG.\n"
                 f"- **R - Rol (<rol>):** Perspectiva técnica y profesional.\n"
-                f"- **E - Especificidad (<reglas>):** Reglas de alcance, perfil de usuario ({request.target_audience or 'Ciudadanía'}), temas prohibidos y prevención de alucinaciones.\n"
-                f"- **A - Acción (<instrucciones>):** Tarea directa de atención y formato de entrega.\n\n"
+                f"- **E - Especificidad (<reglas>):** Reglas de alcance, perfil de usuario ({request.target_audience or 'Usuarios generales'}), temas prohibidos y prevención de alucinaciones.\n"
+                f"- **A - Acción (<instrucciones>):** Tarea directa de resolución de consultas (basada en la DESCRIPCIÓN FUNCIONAL indicada arriba) y formato de entrega.\n\n"
                 f"Responde ÚNICAMENTE con el System Prompt final generado."
             )
         else:  # 'craft' por defecto si viene cualquier otro valor
             meta_instruction = (
                 f"Eres un **Ingeniero de Prompts Senior (Prompt Engineer)** experto en diseñar System Prompts maestros "
                 f"para chatbots institucionalizados basados en RAG.\n\n"
-                f"Tu tarea es construir un **System Prompt maestro** para el tema: '{request.topic}'.\n"
+                f"Tu tarea es construir un **System Prompt maestro** para el tema: '{request.topic}'.\n\n"
+                f"{description_block}"
                 f"CONTEXTO ADICIONAL:\n{context_details}\n\n"
                 f"DEBES estructurar el System Prompt utilizando la **Metodología CRAFT** y usando **etiquetas delimitadoras tipo XML** (<contexto>, <rol>, <instrucciones>, <formato>, <reglas>, <ejemplos>):\n"
-                f"- **C - Contexto (<contexto>):** Describe el entorno ({request.organization or 'Institución'}), el perfil de usuarios ({request.target_audience or 'Ciudadanía'}), el ámbito de servicios y la prioridad estricta a los manuales RAG bajo '## MANUALES TÉCNICOS OFICIALES'.\n"
-                f"- **R - Rol / Persona (<rol>):** Identidad profesional, nivel de autoridad, empatía y especialidad técnica del bot.\n"
-                f"- **A - Acción / Tarea (<instrucciones>):** Instructivo paso a paso de atención, consulta en manuales indexados y orientación clara.\n"
+                f"- **C - Contexto (<contexto>):** Describe el entorno ({request.organization or 'la organización'}), el perfil de usuarios ({request.target_audience or 'Usuarios generales'}), el ámbito de temas/capacidades cubiertas (extraído literalmente de la DESCRIPCIÓN FUNCIONAL indicada arriba, NO de CONTEXTO ADICIONAL que solo trae audiencia/organización/sector) y la prioridad estricta a los manuales RAG bajo '## MANUALES TÉCNICOS OFICIALES'.\n"
+                f"- **R - Rol / Persona (<rol>):** Identidad profesional, nivel de autoridad, empatía y especialidad técnica del bot, coherente con el sector ({request.sector or 'General'}).\n"
+                f"- **A - Acción / Tarea (<instrucciones>):** Instructivo paso a paso para resolver la consulta del usuario apoyándose en los manuales indexados y dando una respuesta clara y accionable.\n"
                 f"- **F - Formato (<formato>):** Estructura visual clara de respuestas (Markdown, viñetas simples, negritas, sin párrafos densos).\n"
-                f"- **T - Tono y Restricciones (<reglas>):** Tono de voz adaptado al usuario ({request.target_audience or 'Ciudadanía'}), vocabulario a evitar, cero alucinaciones y temas fuera de dominio prohibidos.\n"
-                f"- **Few-Shot Prompting (<ejemplos>):** Incluye 2 ejemplos concisos y representativos de Pregunta/Respuesta adaptados a la dependencia.\n\n"
+                f"- **T - Tono y Restricciones (<reglas>):** Tono de voz adaptado al usuario ({request.target_audience or 'Usuarios generales'}), vocabulario a evitar, cero alucinaciones y temas fuera de dominio prohibidos.\n"
+                f"- **Few-Shot Prompting (<ejemplos>):** Incluye 2 ejemplos concisos de Pregunta/Respuesta que reflejen consultas REALES que un usuario haría sobre los temas/funcionalidades descritos en la DESCRIPCIÓN FUNCIONAL indicada arriba (no preguntas genéricas de trámites salvo que la descripción realmente sea de un trámite).\n\n"
                 f"Responde ÚNICAMENTE con el System Prompt final generado en formato Markdown y XML. No agregues intros ni explicaciones extra."
             )
         meta_instruction += mandatory_requirements
         messages = [{"role": "user", "content": meta_instruction}]
-        response_text, _ = await llm.chat(
+        response_text, source = await llm.chat(
             messages=messages,
             temperature=0.3,
             max_tokens=1500,
             topic=request.topic,
-            target_audience=request.target_audience or 'Ciudadanía y usuarios generales',
-            organization=request.organization or 'Institución / Organización',
-            sector=request.sector or 'Público / Privado'
+            description=functional_description,
+            target_audience=request.target_audience or 'Usuarios generales',
+            organization=request.organization or 'la organización',
+            sector=request.sector or 'General'
         )
-        return {"prompt": response_text}
+        # `source` es el nombre del provider real (groq/vertex/...) en éxito, o
+        # "fallback_offline" cuando SmartLLMRouter no tuvo ningún LLM disponible y
+        # devolvió la plantilla determinista estática (ver smart_llm_router.py::chat).
+        # Antes se descartaba con `_` — el admin nunca se enteraba de que el "prompt
+        # generado por IA" en realidad era una plantilla fija sin pasar por ningún LLM.
+        return {
+            "prompt": response_text,
+            "source": source,
+            "is_ai_generated": source != "fallback_offline",
+        }
     else:
         schema_task = (
             f"Actúa como un Arquitecto de Datos. Genera un esquema JSON de extracción para documentos de: {request.topic}. "
@@ -349,6 +388,11 @@ def _snapshot_profile(profile: ChatbotProfile) -> dict:
         "config_metadata": profile.config_metadata,
         "is_active": profile.is_active,
         "version": profile.version,
+        "prompt_topic": profile.prompt_topic,
+        "prompt_description": profile.prompt_description,
+        "prompt_target_audience": profile.prompt_target_audience,
+        "prompt_organization": profile.prompt_organization,
+        "prompt_sector": profile.prompt_sector,
     }
 
 
@@ -402,6 +446,13 @@ class ChatbotProfileDTO(BaseModel):
     # Concurrencia optimista (DB-RACE-001): versión que el cliente cargó al abrir el tema.
     # None en updates legados/clientes viejos desactiva la comprobación (compatibilidad).
     version: Optional[int] = None
+    # Insumos del Generador de System Prompt (generate_prompt), separados del resultado
+    # (system_prompt de arriba) -- ver comentario en ChatbotProfileModel/models.py.
+    prompt_topic: Optional[str] = None
+    prompt_description: Optional[str] = None
+    prompt_target_audience: Optional[str] = None
+    prompt_organization: Optional[str] = None
+    prompt_sector: Optional[str] = None
 
 class ChatbotProfilePublicDTO(BaseModel):
     """DTO de solo lectura para consumo público (widget embebible, selector de tenant).
@@ -477,7 +528,12 @@ async def list_chatbot_profiles_admin(
             "custom_base_url": p.custom_base_url or "",
             "config_metadata": p.config_metadata or {},
             "is_active": p.is_active,
-            "version": p.version or 1
+            "version": p.version or 1,
+            "prompt_topic": p.prompt_topic or "",
+            "prompt_description": p.prompt_description or "",
+            "prompt_target_audience": p.prompt_target_audience or "",
+            "prompt_organization": p.prompt_organization or "",
+            "prompt_sector": p.prompt_sector or "",
         })
     return out
 
@@ -545,7 +601,12 @@ async def save_chatbot_profile(
             custom_api_key=api_key_to_save,
             custom_base_url=data.custom_base_url,
             config_metadata=data.config_metadata or {},
-            is_active=data.is_active if data.is_active is not None else True
+            is_active=data.is_active if data.is_active is not None else True,
+            prompt_topic=data.prompt_topic,
+            prompt_description=data.prompt_description,
+            prompt_target_audience=data.prompt_target_audience,
+            prompt_organization=data.prompt_organization,
+            prompt_sector=data.prompt_sector,
         )
         db.add(profile)
     else:
@@ -571,6 +632,11 @@ async def save_chatbot_profile(
             profile.config_metadata = data.config_metadata
         if data.is_active is not None:
             profile.is_active = data.is_active
+        profile.prompt_topic = data.prompt_topic
+        profile.prompt_description = data.prompt_description
+        profile.prompt_target_audience = data.prompt_target_audience
+        profile.prompt_organization = data.prompt_organization
+        profile.prompt_sector = data.prompt_sector
         profile.version = (profile.version or 1) + 1
 
     await db.flush()  # asegura que profile tenga sus valores finales antes de la snapshot
@@ -711,7 +777,7 @@ async def get_chatbot_documents(
 ):
     """
     Retorna la lista de documentos indexados junto con métricas de salud del índice.
-    
+
     - chunk_count: total de fragmentos generados durante el procesamiento.
     - embedded_chunk_count: fragmentos que tienen embedding vectorial real (no NULL).
     - health_pct: porcentaje de fragmentos con embedding, 0-100. Un valor < 100
@@ -776,15 +842,15 @@ async def upload_chatbot_document(
 ):
     if not file or not file.filename:
         raise HTTPException(status_code=400, detail="Archivo es obligatorio")
-    
+
     file_ext = file.filename.split('.')[-1].lower()
     if file_ext not in ["pdf", "md", "txt"]:
         raise HTTPException(status_code=400, detail="Formato no soportado. Permitido solo PDF, MD o TXT")
-    
+
     try:
         contents = await file.read()
         extracted_text = ""
-        
+
         if file_ext == "pdf":
             try:
                 doc_pdf = fitz.open(stream=contents, filetype="pdf")
@@ -795,13 +861,13 @@ async def upload_chatbot_document(
                 raise HTTPException(status_code=400, detail=f"No se pudo extraer texto del PDF: {pdf_err}")
         else:
             extracted_text = contents.decode("utf-8", errors="ignore")
-        
+
         extracted_text = extracted_text.strip()
         if not extracted_text:
             raise HTTPException(status_code=400, detail="El documento no contiene texto legible")
-        
+
         doc_title = title if (title and title.strip()) else file.filename
-        
+
         new_doc = Document(
             title=doc_title,
             category=category or "general",
@@ -817,7 +883,7 @@ async def upload_chatbot_document(
         )
         db.add(new_doc)
         await db.flush()
-        
+
         chunk_size = 800
         overlap = 100
         chunks = []
@@ -825,7 +891,7 @@ async def upload_chatbot_document(
             chunk_str = extracted_text[i:i + chunk_size].strip()
             if chunk_str:
                 chunks.append(chunk_str)
-        
+
         # Generación de embeddings EN LOTE (auditoría 2026-07-29, PERF-INGEST-001): antes se
         # invocaba embed_service.embed(chunk_text) uno por uno dentro del for, es decir N
         # llamadas secuenciales al modelo local (cada una con su propio round-trip a un hilo
@@ -851,11 +917,11 @@ async def upload_chatbot_document(
             )
             db.add(chunk_model)
             chunk_models.append(chunk_model)
-        
+
         new_doc.chunk_count = len(chunk_models)
         await db.commit()
         await db.refresh(new_doc)
-        
+
         return {
             "status": "success",
             "message": f"Documento '{new_doc.title}' subido y procesado con éxito ({new_doc.chunk_count} fragmentos vectorizados)",
@@ -883,11 +949,11 @@ async def reindex_chatbot_document(
 ):
     """
     Re-ejecuta el proceso de chunking y embedding sobre un documento ya almacenado.
-    
+
     Útil cuando el indexado original falló parcialmente (algunos chunks sin embedding)
     o cuando se actualiza el modelo de embeddings. El archivo original no se vuelve a
     subir: se reutiliza el texto ya extraído que quedó guardado en los chunks existentes.
-    
+
     Flujo:
     1. Verificar que el documento exista.
     2. Concatenar el texto de los chunks existentes (fuente de verdad del contenido).
@@ -1004,7 +1070,7 @@ async def delete_chatbot_document(
     doc = result.scalars().first()
     if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
-    
+
     await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
     await db.delete(doc)
     await db.commit()
@@ -1065,7 +1131,7 @@ async def list_registered_users(
     """Lista todos los usuarios autenticados/registrados desde Authentik"""
     result = await db.execute(select(User).order_by(User.created_at.desc()))
     users = result.scalars().all()
-    
+
     output = []
     for u in users:
         roles_val = u.roles
@@ -1098,26 +1164,26 @@ async def update_user_role(
     user = result.scalars().first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    
+
     new_role = data.role.lower().strip()
     if new_role not in ['admin', 'user']:
         raise HTTPException(status_code=400, detail="Rol inválido. Debe ser 'admin' o 'user'.")
-    
+
     if new_role == 'admin':
         user.roles = json.dumps(["admin", "user"])
     else:
         user.roles = json.dumps(["user"])
-        
+
     await db.commit()
     await db.refresh(user)
-    
+
     roles_val = user.roles
     if isinstance(roles_val, str):
         try:
             roles_val = json.loads(roles_val)
         except Exception:
             roles_val = [roles_val]
-            
+
     return {
         "status": "success",
         "id": user.id,
@@ -1219,11 +1285,11 @@ async def run_prompt_regression(
         )
         answer = res.get("response", "")
         keywords = tc.expected_keywords or []
-        
+
         # Evaluar coincidencia de palabras clave esperadas
         missing_kw = [kw for kw in keywords if kw.lower() not in answer.lower()]
         is_passed = len(missing_kw) == 0 and not res.get("error", False)
-        
+
         if is_passed:
             passed_count += 1
 

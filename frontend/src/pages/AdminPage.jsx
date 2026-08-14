@@ -5,29 +5,16 @@ import PromptRegressionPanel from '../components/admin/PromptRegressionPanel'
 import LLMObservabilityPanel from '../components/admin/LLMObservabilityPanel'
 import ProfileAuditLogPanel from '../components/admin/ProfileAuditLogPanel'
 import {
-    Save, RefreshCw, ToggleLeft, ToggleRight, Settings, FileText, CheckCircle2,
+    Save, RefreshCw, ToggleLeft, ToggleRight, Settings, CheckCircle2,
     AlertTriangle, Eye, Sparkles, Plus, Trash2, Layers, Upload, Image,
-    Bot, MessageSquare, HelpCircle, ShieldCheck, Scale, Building2, User, Cpu, Headphones, Zap, Code, Copy, Users, UserCheck, Activity
+    ShieldCheck, User, Cpu, Code, Copy, Users, UserCheck, Activity
 } from 'lucide-react'
-
-const ICON_MAP = {
-    Bot, Sparkles, MessageSquare, HelpCircle, ShieldCheck, Scale, FileText, Building2, User, Cpu, Headphones, Zap
-}
-
-const ICON_LIBRARY = [
-    { id: 'Bot', label: 'Bot', Icon: Bot },
-    { id: 'Sparkles', label: 'IA Destellos', Icon: Sparkles },
-    { id: 'MessageSquare', label: 'Chat', Icon: MessageSquare },
-    { id: 'HelpCircle', label: 'Ayuda', Icon: HelpCircle },
-    { id: 'ShieldCheck', label: 'Seguridad', Icon: ShieldCheck },
-    { id: 'Scale', label: 'Legal / RPP', Icon: Scale },
-    { id: 'FileText', label: 'Documentos', Icon: FileText },
-    { id: 'Building2', label: 'Catastro / IRCEP', Icon: Building2 },
-    { id: 'User', label: 'Asistente', Icon: User },
-    { id: 'Cpu', label: 'Algoritmo', Icon: Cpu },
-    { id: 'Headphones', label: 'Soporte', Icon: Headphones },
-    { id: 'Zap', label: 'Rápido', Icon: Zap },
-]
+// Biblioteca de íconos del widget, compartida con ChatInterface.jsx (que
+// renderiza el chat real) -- ver constants/chatIcons.js. Antes vivía
+// duplicada solo aquí y el chat real nunca la leía (incidente real
+// 2026-08-14: el selector cambiaba el ícono guardado en BD, pero el chat
+// seguía mostrando 🤖 siempre, sin importar la selección).
+import { ICON_MAP, ICON_LIBRARY } from '../constants/chatIcons'
 
 export default function AdminPage() {
     const [profiles, setProfiles] = useState([])
@@ -48,12 +35,29 @@ export default function AdminPage() {
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [message, setMessage] = useState(null)
+
+    // Auto-dismiss del toast tras unos segundos (estándar en notificaciones). Se limpia
+    // el timer si el mensaje cambia antes de tiempo (ej. un segundo guardado seguido) o
+    // si el componente se desmonta, para no llamar setMessage(null) sobre un mensaje que
+    // ya no es el actual / un componente ya desmontado.
+    useEffect(() => {
+        if (!message) return
+        const timer = setTimeout(() => setMessage(null), 5000)
+        return () => clearTimeout(timer)
+    }, [message])
+
     const [generating, setGenerating] = useState(false)
     const [topic, setTopic] = useState('')
+    // Descripción funcional/capacidades larga, separada del nombre corto del tema (`topic`).
+    // Si se deja vacía, el backend usa `topic` como fallback (compatibilidad).
+    const [description, setDescription] = useState('')
     const [methodology, setMethodology] = useState('craft') // 'craft', 'crea' o 'aspecct'
-    const [targetAudience, setTargetAudience] = useState('Ciudadanía en General (Público Abierto)')
-    const [organization, setOrganization] = useState('Registro Público / Catastro')
-    const [sector, setSector] = useState('Gobierno Estatal / Organismo Descentralizado')
+    // Sin default de ningún tenant específico (ver CLAUDE.md: nunca hardcodear contenido de un
+    // tenant como fallback universal — ya paso una vez con RPP en chat_service.py). Si el admin
+    // no elige nada, el backend ya cae a valores genericos ('Usuarios generales'/'General').
+    const [targetAudience, setTargetAudience] = useState('')
+    const [organization, setOrganization] = useState('')
+    const [sector, setSector] = useState('')
 
     // Catálogo de modelos EN VIVO por proveedor (reemplaza la lista estática que se
     // desactualizaba con cada nueva versión de modelo que sacaba cada proveedor)
@@ -124,13 +128,25 @@ export default function AdminPage() {
         if (selectedProfileId && profiles.length > 0) {
             const active = profiles.find(p => p.id === selectedProfileId)
             if (active) {
-                // Auto-selección inteligente de catálogos LOV según el perfil/tenant activo
-                if (active.id === 'control_escolar') {
+                // Los insumos del generador (nombre corto, descripcion, audiencia/org/sector)
+                // ahora se persisten en el perfil (prompt_topic/prompt_description/etc, ver
+                // admin.py::save_chatbot_profile) -- si el tema ya los tiene guardados, se
+                // cargan tal cual. Si no (temas viejos que nunca los guardaron), se cae al
+                // catalogo LOV hardcodeado por id como antes (incidente 2026-08-13, ver
+                // BITACORA_ANALISIS_CAUSAL.md: por que no se cargaban automaticamente).
+                setTopic(active.prompt_topic || '')
+                setDescription(active.prompt_description || '')
+
+                if (active.prompt_target_audience || active.prompt_organization || active.prompt_sector) {
+                    setTargetAudience(active.prompt_target_audience || '')
+                    setOrganization(active.prompt_organization || '')
+                    setSector(active.prompt_sector || '')
+                } else if (active.id === 'control_escolar') {
                     setTargetAudience('Ciudadanía en General (Público Abierto)')
                     setOrganization('Universidad / Red de Colegios')
                     setSector('Educación Superior & Colegios')
                 } else if (active.id === 'mesa_ayuda') {
-                    setTargetAudience('Servidores Públicos / Empleados Internos')
+                    setTargetAudience('Personal Interno de la Empresa (Colaboradores)')
                     setOrganization('Dirección de Tecnologías de Información')
                     setSector('Tecnología, Software & Mesa de Ayuda TI')
                 } else if (active.id === 'control_vehicular') {
@@ -145,6 +161,12 @@ export default function AdminPage() {
                     setTargetAudience('Notarios, Abogados y Profesionales Especializados')
                     setOrganization('Instituto de Catastro y Valuación')
                     setSector('Gobierno Estatal / Organismo Descentralizado')
+                } else {
+                    // Perfil nuevo/no catalogado (ej. Centinela-AI): NO arrastrar el LOV del
+                    // perfil previamente seleccionado ni ningun default de tenant especifico.
+                    setTargetAudience('')
+                    setOrganization('')
+                    setSector('')
                 }
 
                 setConfig({
@@ -168,7 +190,12 @@ export default function AdminPage() {
                     custom_api_key: active.custom_api_key || '',
                     custom_base_url: active.custom_base_url || '',
                     version: active.version || 1,
-                    is_active: active.is_active !== undefined ? active.is_active : true
+                    is_active: active.is_active !== undefined ? active.is_active : true,
+                    prompt_topic: active.prompt_topic || '',
+                    prompt_description: active.prompt_description || '',
+                    prompt_target_audience: active.prompt_target_audience || '',
+                    prompt_organization: active.prompt_organization || '',
+                    prompt_sector: active.prompt_sector || ''
                 })
                 setSandboxMessages([])
             }
@@ -250,13 +277,24 @@ export default function AdminPage() {
     const handleSaveConfig = async (e) => {
         e.preventDefault()
 
+        // Se sincronizan los insumos vivos del generador (puede haberlos editado el
+        // admin después de cargar el tema) con lo que realmente se persiste.
+        const configToSave = {
+            ...config,
+            prompt_topic: topic,
+            prompt_description: description,
+            prompt_target_audience: targetAudience,
+            prompt_organization: organization,
+            prompt_sector: sector,
+        }
+
         // El tema 'general' es de solo lectura (plantilla base / referencia canónica):
         // el backend rechaza cualquier UPDATE sobre él (ver admin.py::save_chatbot_profile).
         // En vez de dejar que el guardado falle, se precarga el modal de "Nuevo Tema" con
         // la configuración ya editada, para que el usuario solo tenga que elegir un id y
         // nombre nuevos, sin perder los cambios que ya hizo.
         if (config.id === 'general') {
-            setNewProfile({ ...config, id: '', name: '' })
+            setNewProfile({ ...configToSave, id: '', name: '' })
             setShowNewProfileForm(true)
             setMessage({
                 type: 'info',
@@ -268,11 +306,11 @@ export default function AdminPage() {
         setSaving(true)
         setMessage(null)
         try {
-            const res = await api.post('admin/chatbot/profiles', config)
+            const res = await api.post('admin/chatbot/profiles', configToSave)
             // Actualiza la versión local con la que devolvió el backend (ya incrementada) para
             // que el siguiente "Guardar" no choque consigo mismo — ver DB-RACE-001.
             const savedVersion = res.data?.profile?.version
-            const updatedConfig = savedVersion !== undefined ? { ...config, version: savedVersion } : config
+            const updatedConfig = savedVersion !== undefined ? { ...configToSave, version: savedVersion } : configToSave
             setConfig(updatedConfig)
             setProfiles(prev => prev.map(p => p.id === config.id ? updatedConfig : p))
             setMessage({ type: 'success', text: `Perfil '${config.name}' guardado correctamente.` })
@@ -421,6 +459,7 @@ export default function AdminPage() {
         try {
             const res = await api.post('admin/generate-prompt', {
                 topic,
+                description,
                 context: 'consulta',
                 methodology,
                 target_audience: targetAudience,
@@ -431,7 +470,15 @@ export default function AdminPage() {
             })
             if (res.data.prompt) {
                 setConfig(prev => ({ ...prev, system_prompt: res.data.prompt }))
-                setMessage({ type: 'success', text: `Prompt asistido generado con éxito utilizando la metodología ${methodology.toUpperCase()} y el contexto institucional. Recuerda hacer clic en "Guardar Configuración".` })
+                if (res.data.is_ai_generated === false) {
+                    // SmartLLMRouter no tuvo ningún proveedor de IA disponible (rate limit,
+                    // sin API key, etc.) y devolvió la plantilla determinista offline en vez
+                    // de una respuesta real del LLM — avisar explícitamente, no presentarlo
+                    // como si un modelo lo hubiera redactado.
+                    setMessage({ type: 'error', text: '⚠️ Ningún proveedor de IA está disponible ahora mismo (revisa rate limits/API keys). Se generó una PLANTILLA DETERMINISTA OFFLINE, no una respuesta de un LLM — revísala y ajústala manualmente, o reintenta "Generar" más tarde para obtener la versión redactada por IA.' })
+                } else {
+                    setMessage({ type: 'success', text: `Prompt asistido generado con éxito con IA (${res.data.source}) utilizando la metodología ${methodology.toUpperCase()} y el contexto institucional. Recuerda hacer clic en "Guardar Configuración".` })
+                }
             }
         } catch (error) {
             console.error("Error generating prompt:", error)
@@ -478,10 +525,32 @@ export default function AdminPage() {
         )
     }
 
-    const ActiveIcon = ICON_MAP[config.icon] || Bot
+    const ActiveIcon = ICON_MAP[config.icon] || ICON_MAP.Bot
 
     return (
         <div className="flex-1 p-6 bg-slate-50 dark:bg-slate-950 transition-colors">
+            {/* Toast de notificaciones -- posicion fija, visible sin importar el scroll.
+                Antes vivia dentro del flujo normal de la pagina justo debajo del banner,
+                por lo que un guardado hecho desde un boton casi al final del formulario
+                (ej. "Guardar Configuración") dejaba la notificación fuera de la vista sin
+                hacer scroll hacia arriba. */}
+            {message && (
+                <div className="fixed top-6 right-6 z-50 max-w-md">
+                    <div className={`p-4 rounded-xl flex items-center justify-between gap-3 border shadow-lg ${
+                        message.type === 'success'
+                            ? 'bg-emerald-50 dark:bg-emerald-950/90 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-400'
+                            : message.type === 'info'
+                                ? 'bg-[var(--cs-info-bg)] border-blue-200 dark:border-blue-900 text-[var(--cs-info)]'
+                                : 'bg-rose-50 dark:bg-rose-950/90 border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-400'
+                    }`}>
+                        <div className="flex items-center gap-3">
+                            {message.type === 'success' ? <CheckCircle2 size={20} className="shrink-0" /> : <AlertTriangle size={20} className="shrink-0" />}
+                            <span className="text-sm font-medium">{message.text}</span>
+                        </div>
+                        <button onClick={() => setMessage(null)} className="text-xs font-bold opacity-70 hover:opacity-100 shrink-0">✕</button>
+                    </div>
+                </div>
+            )}
             <div className="max-w-6xl mx-auto space-y-6">
 
                 <ModuleBanner
@@ -520,22 +589,6 @@ export default function AdminPage() {
                     }
                 />
 
-                {/* Notifications */}
-                {message && (
-                    <div className={`p-4 rounded-xl flex items-center justify-between border ${
-                        message.type === 'success'
-                            ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-400'
-                            : message.type === 'info'
-                                ? 'bg-[var(--cs-info-bg)] border-blue-200 dark:border-blue-900 text-[var(--cs-info)]'
-                                : 'bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-400'
-                    }`}>
-                        <div className="flex items-center gap-3">
-                            {message.type === 'success' ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
-                            <span className="text-sm font-medium">{message.text}</span>
-                        </div>
-                        <button onClick={() => setMessage(null)} className="text-xs font-bold opacity-70 hover:opacity-100">✕</button>
-                    </div>
-                )}
 
                 {/* Modal / Formulario para crear tema */}
                 {showNewProfileForm && (
@@ -914,7 +967,7 @@ export default function AdminPage() {
                                 <button
                                     type="button"
                                     onClick={() => {
-                                        setTargetAudience('Servidores Públicos / Empleados Internos')
+                                        setTargetAudience('Personal Interno de la Empresa (Colaboradores)')
                                         setOrganization('Dirección de Tecnologías de Información')
                                         setSector('Tecnología, Software & Mesa de Ayuda TI')
                                         setConfig(prev => ({
@@ -932,7 +985,7 @@ export default function AdminPage() {
                                 <button
                                     type="button"
                                     onClick={() => {
-                                        setTargetAudience('Servidores Públicos / Empleados Internos')
+                                        setTargetAudience('Personal Interno de la Empresa (Colaboradores)')
                                         setOrganization('Departamento de Recursos Humanos')
                                         setSector('Tecnología, Software & Mesa de Ayuda TI')
                                         setConfig(prev => ({
@@ -968,7 +1021,7 @@ export default function AdminPage() {
                                 <button
                                     type="button"
                                     onClick={() => {
-                                        setTargetAudience('Servidores Públicos / Empleados Internos')
+                                        setTargetAudience('Personal Interno de la Empresa (Colaboradores)')
                                         setOrganization('Oficina de Auditoría y Compliance')
                                         setSector('Tecnología, Software & Mesa de Ayuda TI')
                                         setConfig(prev => ({
@@ -1048,10 +1101,12 @@ export default function AdminPage() {
                                         onChange={(e) => setTargetAudience(e.target.value)}
                                         className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-800 dark:text-slate-100 outline-none"
                                     >
+                                        <option value="">-- Selecciona audiencia --</option>
                                         <option value="Ciudadanía en General (Público Abierto)">Ciudadanía en General (Público Abierto)</option>
                                         <option value="Clientes Finales / Consumidores (B2C)">Clientes Finales / Consumidores (B2C)</option>
                                         <option value="Clientes Corporativos / Empresas (B2B)">Clientes Corporativos / Empresas (B2B)</option>
-                                        <option value="Servidores Públicos / Empleados Internos">Servidores Públicos / Empleados Internos</option>
+                                        <option value="Servidores Públicos (Sector Gobierno)">Servidores Públicos (Sector Gobierno)</option>
+                                        <option value="Personal Interno de la Empresa (Colaboradores)">Personal Interno de la Empresa (Colaboradores)</option>
                                         <option value="Notarios, Abogados y Profesionales Especializados">Notarios, Abogados y Profesionales</option>
                                         <option value="Desarrolladores e Ingenieros de TI">Desarrolladores e Ingenieros de TI</option>
                                     </select>
@@ -1079,6 +1134,7 @@ export default function AdminPage() {
                                         onChange={(e) => setSector(e.target.value)}
                                         className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-800 dark:text-slate-100 outline-none"
                                     >
+                                        <option value="">-- Selecciona sector --</option>
                                         <option value="Gobierno Estatal / Organismo Descentralizado">Gobierno Estatal / Organismo</option>
                                         <option value="Gobierno Municipal / Alcaldía">Gobierno Municipal / Alcaldía</option>
                                         <option value="Sector Privado / Comercio & E-Commerce">Sector Privado / Comercio & E-Commerce</option>
@@ -1090,10 +1146,23 @@ export default function AdminPage() {
                                 </div>
                             </div>
 
+                            <div>
+                                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase mb-1">
+                                    📝 Descripción Funcional / Capacidades (opcional)
+                                </label>
+                                <textarea
+                                    rows={3}
+                                    placeholder="Si el 'tema' de abajo es un nombre corto (ej. 'Centinela-AI'), pega aquí la descripción completa de qué hace el producto/servicio: funcionalidades, módulos, flujos que ejecuta, etc. El generador usará ESTE texto (no el nombre corto) para listar los temas válidos y armar los ejemplos. Si se deja vacío, se usa el campo 'tema' como descripción."
+                                    value={description}
+                                    onChange={(e) => setDescription(e.target.value)}
+                                    className="w-full bg-slate-50 dark:bg-slate-855 border border-slate-200 dark:border-slate-750 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary dark:focus:ring-blue-500 text-slate-800 dark:text-slate-100"
+                                />
+                            </div>
+
                             <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                                 <input
                                     type="text"
-                                    placeholder={`Escribe el tema para generar con ${methodology.toUpperCase()}: ej. Inscripción de Inmuebles, Cédula Catastral...`}
+                                    placeholder={`Escribe el NOMBRE CORTO del tema: ej. Centinela-AI, Inscripción de Inmuebles, Cédula Catastral...`}
                                     value={topic}
                                     onChange={(e) => setTopic(e.target.value)}
                                     className="flex-1 bg-slate-50 dark:bg-slate-855 border border-slate-200 dark:border-slate-750 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary dark:focus:ring-blue-500 text-slate-800 dark:text-slate-100"

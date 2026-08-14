@@ -25,7 +25,7 @@ class HybridCacheLayer:
     - 50% consultas semánticamente equivalentes resueltas sin consumir la API del LLM.
     - Medición en tiempo real de tasa de aciertos (Hit Rate) y latencia.
     """
-    
+
     def __init__(self):
         """Inicializar caché híbrida"""
         self.redis_client = None
@@ -40,7 +40,7 @@ class HybridCacheLayer:
             "total_queries": 0,
             "total_hit_rate": 0.0
         }
-        
+
     async def initialize(self):
         """Inicializar conexión a Redis y modelo de embeddings"""
         try:
@@ -51,52 +51,60 @@ class HybridCacheLayer:
                 socket_connect_timeout=5,
                 socket_keepalive=True
             )
-            
+
             # Verificar conexión
             await self.redis_client.ping()
             logger.info("✅ Redis conectado para caché híbrida")
-            
+
             # Cargar modelo de embeddings (local, no requiere API)
             self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
             logger.info("✅ Modelo de embeddings cargado (all-MiniLM-L6-v2)")
-            
+
         except Exception as e:
             logger.error(f"❌ Error inicializando caché híbrida: {e}")
             raise
-    
+
     def _normalize_query(self, query: str) -> str:
         """Normalizar query para búsqueda exacta"""
         return query.lower().strip()
-    
-    def _generate_cache_key(self, query: str) -> str:
-        """Generar clave determinística para Redis"""
+
+    def _generate_cache_key(self, query: str, namespace: str = "default") -> str:
+        """Generar clave determinística para Redis, aislada por tenant/perfil.
+
+        HALLAZGO 2026-08-14: antes la clave era solo hash(query), sin el tenant --
+        en un sistema multitenant real eso significa que la respuesta cacheada para
+        una pregunta en el perfil "rpp" se serviría textualmente a la misma pregunta
+        hecha en "centinela-ai" (u otro tenant cualquiera), sin importar que el
+        dominio/contenido real sea completamente distinto. Namespace obligatorio en
+        la clave para que cada tenant tenga su propio espacio de caché aislado.
+        """
         normalized = self._normalize_query(query)
         hash_obj = hashlib.md5(normalized.encode())
-        return f"cache_consulta_rpp:{hash_obj.hexdigest()}"
-    
-    async def get_exact_match(self, query: str) -> Optional[Dict[str, Any]]:
+        return f"cache_consulta_rpp:{namespace}:{hash_obj.hexdigest()}"
+
+    async def get_exact_match(self, query: str, namespace: str = "default") -> Optional[Dict[str, Any]]:
         """
         Buscar coincidencia EXACTA en Redis
         - Éxito = respuesta del caché ($0 Groq)
         - Fallo = proceder a búsqueda de similares
         """
         try:
-            key = self._generate_cache_key(query)
+            key = self._generate_cache_key(query, namespace)
             cached = await self.redis_client.get(key)
-            
+
             if cached:
                 result = json.loads(cached)
                 self.cache_stats["hits_redis"] += 1
                 logger.info(f"🟢 Redis HIT (exact): {query[:50]}...")
                 return result
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Error en Redis exact match: {e}")
             return None
-    
-    async def get_similar_match(self, query: str) -> Optional[Tuple[float, Dict[str, Any]]]:
+
+    async def get_similar_match(self, query: str, namespace: str = "default") -> Optional[Tuple[float, Dict[str, Any]]]:
         """
         Buscar coincidencia SIMILAR usando embeddings
         - Retorna: (similitud, respuesta_cached)
@@ -107,63 +115,66 @@ class HybridCacheLayer:
         try:
             if not self.embedding_model:
                 return None
-            
+
             # Generar embedding de la query
             query_embedding = self.embedding_model.encode(query)
-            
-            # Buscar en caché todas las respuestas anteriores
-            keys = await self.redis_client.keys("cache_consulta_rpp:*")
+
+            # Buscar en caché SOLO dentro del namespace (tenant) actual -- antes
+            # escaneaba "cache_consulta_rpp:*" completo, mezclando respuestas de
+            # otros tenants sin relación por similitud semántica pura (ver
+            # comentario en _generate_cache_key).
+            keys = await self.redis_client.keys(f"cache_consulta_rpp:{namespace}:*")
             if not keys:
                 return None
-            
+
             # Calcular similitudes
             best_match = None
             best_score = 0
-            
+
             for key in keys[:100]:  # Limitar búsqueda a últimas 100 queries
                 cached = await self.redis_client.get(key)
                 if not cached:
                     continue
-                
+
                 try:
                     cached_data = json.loads(cached)
                     cached_embedding = np.array(cached_data.get("embedding", []))
-                    
+
                     if len(cached_embedding) == 0:
                         continue
-                    
+
                     # Calcular similitud coseno
                     similarity = np.dot(query_embedding, cached_embedding) / (
                         np.linalg.norm(query_embedding) * np.linalg.norm(cached_embedding)
                     )
-                    
+
                     if similarity > best_score and similarity > self.similarity_threshold_partial:
                         best_score = similarity
                         best_match = cached_data
-                        
+
                 except Exception as e:
                     logger.debug(f"Error procesando embedding: {e}")
                     continue
-            
+
             if best_match and best_score > self.similarity_threshold_partial:
                 self.cache_stats["hits_embedding"] += 1
                 logger.info(f"🟡 Embedding HIT (similarity: {best_score:.2f}): {query[:50]}...")
                 return (best_score, best_match)
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Error en embedding similarity search: {e}")
             return None
-    
-    async def store_response(self, query: str, response: str, sources: List[str] = None):
+
+    async def store_response(self, query: str, response: str, sources: List[str] = None, namespace: str = "default"):
         """
         Guardar respuesta en caché para futuras consultas
         Incluir embedding para búsqueda de similares
         """
         try:
-            key = self._generate_cache_key(query)
-            
+            key = self._generate_cache_key(query, namespace)
+
             # Generar embedding de la respuesta
             embedding = None
             if self.embedding_model:
@@ -171,7 +182,7 @@ class HybridCacheLayer:
                     embedding = self.embedding_model.encode(query).tolist()
                 except Exception as e:
                     logger.debug(f"No se pudo generar embedding: {e}")
-            
+
             # Preparar datos para caché
             cache_data = {
                 "query": query,
@@ -181,35 +192,38 @@ class HybridCacheLayer:
                 "timestamp": time.time(),
                 "ttl_minutes": self.redis_ttl // 60
             }
-            
+
             # Guardar en Redis co TTL de 24h
             await self.redis_client.setex(
                 key,
                 self.redis_ttl,
                 json.dumps(cache_data)
             )
-            
+
             logger.info(f"💾 Respuesta guardada en caché: {query[:50]}...")
-            
+
         except Exception as e:
             logger.error(f"Error guardando en caché: {e}")
-    
-    async def get_with_fallback(self, query: str) -> Optional[Dict[str, Any]]:
+
+    async def get_with_fallback(self, query: str, namespace: str = "default") -> Optional[Dict[str, Any]]:
         """
         Estrategia completa:
         1. Buscar exacta en Redis (30% queries) → $0
         2. Buscar similar con embeddings (50% queries) → $0 o refinamiento LLM
         3. Si nada funciona → None (20% queries)
+
+        `namespace` aísla el caché por tenant/perfil (ej. profile_id) -- ver
+        _generate_cache_key.
         """
         self.cache_stats["total_queries"] += 1
-        
+
         # Paso 1: Exacta
-        exact_result = await self.get_exact_match(query)
+        exact_result = await self.get_exact_match(query, namespace)
         if exact_result:
             return exact_result
-        
+
         # Paso 2: Similar
-        similar_result = await self.get_similar_match(query)
+        similar_result = await self.get_similar_match(query, namespace)
         if similar_result:
             score, result = similar_result
             if score > self.similarity_threshold_exact:
@@ -222,12 +236,12 @@ class HybridCacheLayer:
                 result["needs_llm_refinement"] = True
                 result["similarity_score"] = score
                 return result
-        
+
         # Paso 3: Cache miss
         logger.info(f"❌ Cache MISS: {query[:50]}...")
         self.cache_stats["misses"] += 1
         return None
-    
+
     def get_cache_stats(self) -> Dict[str, Any]:
         """Estadísticas de eficiencia de caché"""
         total = self.cache_stats["total_queries"]
@@ -235,7 +249,7 @@ class HybridCacheLayer:
             hits = self.cache_stats["hits_redis"] + self.cache_stats["hits_embedding"]
             hit_rate = (hits / total) * 100
             self.cache_stats["total_hit_rate"] = hit_rate
-        
+
         return {
             "redis_hits": self.cache_stats["hits_redis"],
             "embedding_hits": self.cache_stats["hits_embedding"],
@@ -244,7 +258,7 @@ class HybridCacheLayer:
             "hit_rate_percent": self.cache_stats["total_hit_rate"],
             "estimated_groq_reduction": f"{self.cache_stats['total_hit_rate']:.1f}%"
         }
-    
+
     async def clear_cache(self):
         """Limpiar toda la caché (para testing)"""
         try:
@@ -254,7 +268,7 @@ class HybridCacheLayer:
             logger.info(f"🗑️ Caché limpiada ({len(keys)} entradas removed)")
         except Exception as e:
             logger.error(f"Error limpiando caché: {e}")
-    
+
     async def close(self):
         """Cerrar conexión a Redis"""
         if self.redis_client:

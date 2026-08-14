@@ -7,14 +7,14 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     """Configuración global de la aplicación"""
-    
+
     # App Settings
     APP_NAME: str = os.getenv("APP_NAME", "ConsultaRPP")
     APP_VERSION: str = os.getenv("APP_VERSION", "1.0.0")
     APP_ENV: str = os.getenv("APP_ENV", "production")
     DEBUG: bool = os.getenv("APP_DEBUG", "false").lower() == "true"
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-    
+
     # API Prefix
     API_PREFIX: str = os.getenv("API_PREFIX", "/api/v1")
 
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     AUTHENTIK_URL: str = os.getenv("AUTHENTIK_URL", "https://auth.casmart.internal")
     AUTHENTIK_CLIENT_ID: str = os.getenv("AUTHENTIK_CLIENT_ID", "consulta-smart")
     AUTHENTIK_CLIENT_SECRET: Optional[str] = os.getenv("AUTHENTIK_CLIENT_SECRET")
-    
+
     # Database (PostgreSQL 18 + asyncpg)
     DB_HOST: str = os.getenv("DB_HOST", "postgres")
     DB_PORT: int = int(os.getenv("DB_PORT", "5432"))
@@ -35,21 +35,21 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = os.getenv("DB_PASSWORD", "***DB_PASSWORD_REDACTED***")
     DB_NAME: str = os.getenv("DB_NAME", "consultarpp")
     DB_MAX_CONNECTIONS: int = int(os.getenv("DB_MAX_CONNECTIONS", "100"))
-    
+
     @property
     def DATABASE_URL(self) -> str:
         # Mask password for safety
         masked_url = f"postgresql+asyncpg://{self.DB_USER}:****@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         # We can't use logger here easily if it's not initialized, so we use print or wait until init_db
         return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
-    
+
     # Redis / Celery / Cache
     REDIS_HOST: str = os.getenv("REDIS_HOST", "redis")
     REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
     REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
     REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD")
     REDIS_TTL_SECONDS: int = int(os.getenv("REDIS_TTL_SECONDS", "86400"))
-    
+
     @property
     def REDIS_URL(self) -> str:
         # Si existe REDIS_URL en el .env, usarla directamente
@@ -60,49 +60,66 @@ class Settings(BaseSettings):
         if self.REDIS_PASSWORD:
             return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
-    
+
     @property
     def CELERY_BROKER(self) -> str:
         broker_env = os.getenv("CELERY_BROKER")
         if broker_env:
             return broker_env
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/1"
-    
+
     @property
     def CELERY_BACKEND(self) -> str:
         backend_env = os.getenv("CELERY_BACKEND")
         if backend_env:
             return backend_env
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/2"
-    
+
     WORKER_LOG_LEVEL: str = os.getenv("WORKER_LOG_LEVEL", "INFO")
-    
+
     # Security & Auth
     SECRET_KEY: str = os.getenv("SECRET_KEY", "casmarts_super_secret_key_rpp_2026")  # Fallback secure key
     JWT_SECRET: str = os.getenv("JWT_SECRET", "casmarts_jwt_secret_key_rpp_2026")  # Fallback secure key
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     JWT_EXPIRATION_HOURS: int = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
-    
+
     # LLM & RAG
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "groq")
     GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    # "gemini-1.5-flash" fue descontinuado por Google (404 NOT_FOUND real, incidente
+    # 2026-08-13 -- ver docs/BITACORA_ANALISIS_CAUSAL.md). Se usa el alias "-latest" que
+    # Google mantiene apuntando siempre al modelo flash vigente, en vez de una version
+    # especifica que puede descontinuarse sin aviso.
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
     GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")
     GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-    
+
     # Vertex AI (Google Cloud)
     GCP_PROJECT_ID: Optional[str] = os.getenv("GCP_PROJECT_ID")
     GCP_LOCATION: str = os.getenv("GCP_LOCATION", "us-central1")
     GCP_CREDENTIALS_JSON: Optional[str] = os.getenv("GCP_CREDENTIALS_JSON")
-    VERTEX_MODEL: str = os.getenv("VERTEX_MODEL", "gemini-1.5-pro")
-    
+    # Mismo motivo que GEMINI_MODEL: se usa el alias "-latest" en vez de una version fija.
+    VERTEX_MODEL: str = os.getenv("VERTEX_MODEL", "gemini-pro-latest")
+
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL")  # For OpenRouter
-    
+    OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL")
+
     # NVIDIA NIM
     NVIDIA_NIM_API_KEY: Optional[str] = os.getenv("NVIDIA_NIM_API_KEY")
     NVIDIA_NIM_BASE_URL: str = os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
     NVIDIA_NIM_MODEL: str = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
+
+    # OpenRouter (agregador multi-proveedor, API compatible con OpenAI) -- agregado
+    # 2026-08-14 como respaldo global adicional, ver BITACORA_ANALISIS_CAUSAL.md.
+    OPENROUTER_API_KEY: Optional[str] = os.getenv("OPENROUTER_API_KEY")
+    OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+
+    # Cerebras (inferencia de muy baja latencia, API compatible con OpenAI) -- agregado
+    # 2026-08-14, mismo motivo que OpenRouter arriba.
+    CEREBRAS_API_KEY: Optional[str] = os.getenv("CEREBRAS_API_KEY")
+    CEREBRAS_BASE_URL: str = os.getenv("CEREBRAS_BASE_URL", "https://api.cerebras.ai/v1")
+    CEREBRAS_MODEL: str = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
 
     # Ollama (motor local u on-premise; no requiere API key, solo endpoint alcanzable por el backend)
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -114,14 +131,14 @@ class Settings(BaseSettings):
     MISTRAL_BASE_URL: str = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
 
     TOP_P: float = float(os.getenv("TOP_P", "0.95"))
-    
+
     EMBEDDING_DIMENSION: int = 384
     VECTOR_SIMILARITY_THRESHOLD: float = 0.75
-    
+
     # Storage (SeaweedFS)
     SEAWEEDFS_MASTER_URL: str = os.getenv("SEAWEEDFS_MASTER_URL", "http://seaweedfs:9333")
     SEAWEEDFS_VOLUME_URL: str = os.getenv("SEAWEEDFS_VOLUME_URL", "http://seaweedfs:8080")
-    
+
     # Demo User (Development Only)
     DEMO_USER_EMAIL: str = os.getenv("DEMO_USER_EMAIL", "demo@example.com")
     DEMO_USER_PASSWORD: str = os.getenv("DEMO_USER_PASSWORD", "password123")
@@ -138,7 +155,7 @@ class Settings(BaseSettings):
 
     # Authentik / OIDC (Centralizada en Core)
     AUTHENTIK_INTERNAL_URL: str = os.getenv("AUTHENTIK_INTERNAL_URL", "http://casmarts-core-authentik-server:9000")
-    
+
     @property
     def CORS_ORIGINS(self) -> List[str]:
         origins = os.getenv("CORS_ORIGINS", "*")
