@@ -109,18 +109,6 @@ class Settings(BaseSettings):
     NVIDIA_NIM_BASE_URL: str = os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
     NVIDIA_NIM_MODEL: str = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
 
-    # OpenRouter (agregador multi-proveedor, API compatible con OpenAI) -- agregado
-    # 2026-08-14 como respaldo global adicional, ver BITACORA_ANALISIS_CAUSAL.md.
-    OPENROUTER_API_KEY: Optional[str] = os.getenv("OPENROUTER_API_KEY")
-    OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
-
-    # Cerebras (inferencia de muy baja latencia, API compatible con OpenAI) -- agregado
-    # 2026-08-14, mismo motivo que OpenRouter arriba.
-    CEREBRAS_API_KEY: Optional[str] = os.getenv("CEREBRAS_API_KEY")
-    CEREBRAS_BASE_URL: str = os.getenv("CEREBRAS_BASE_URL", "https://api.cerebras.ai/v1")
-    CEREBRAS_MODEL: str = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
-
     # Ollama (motor local u on-premise; no requiere API key, solo endpoint alcanzable por el backend)
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 

@@ -57,7 +57,7 @@ class SmartLLMRouter:
     """
     Orquestador multimodelo que selecciona dinámicamente el mejor proveedor disponible:
     1. Disponibilidad (conteo de errores y bloqueos por Rate Limit).
-    2. Prioridad de proveedores (Groq -> Cerebras -> Vertex AI -> NVIDIA NIM -> Gemini -> OpenRouter).
+    2. Prioridad de proveedores (Groq -> Vertex AI -> NVIDIA NIM -> Gemini).
     3. Soporte para anulaciones (overrides) personalizadas por tema/tenant.
     """
 
@@ -73,8 +73,7 @@ class SmartLLMRouter:
             custom_provider: si se da (y no es 'default'), el router se restringe a
                 UN solo proveedor específico para este tema/tenant, en vez de la
                 cascada global de fallback. Valores soportados: 'groq', 'gemini',
-                'nvidia', 'openai', 'anthropic', 'mistral', 'ollama', 'openrouter',
-                'cerebras'. 'vertex' NO
+                'nvidia', 'openai', 'anthropic', 'mistral', 'ollama'. 'vertex' NO
                 soporta override por tema (usa credenciales de proyecto GCP, no una
                 API key simple) y lanza ValueError explícito — el llamador
                 (chat_service.py) captura esto y hace fallback al router global, en
@@ -88,17 +87,12 @@ class SmartLLMRouter:
                 gateway/proxy propio en vez del endpoint público del proveedor).
         """
         # Orden de definicion = orden de prioridad por defecto (con "groq" preferido
-        # movido al frente, ver mas abajo). Cerebras justo despues de groq por su
-        # latencia de inferencia muy baja; openrouter al final por ser un agregador
-        # (un salto de red adicional) -- agregados 2026-08-14, ver
-        # BITACORA_ANALISIS_CAUSAL.md.
+        # movido al frente, ver mas abajo).
         self.providers = {
             "groq": None,
-            "cerebras": None,
             "vertex": None,
             "nvidia": None,
             "gemini": None,
-            "openrouter": None,
         }
 
         self.embeddings_service = LocalEmbeddingService()
@@ -140,7 +134,7 @@ class SmartLLMRouter:
         """Configura el router en modo 'un solo proveedor' con credenciales personalizadas por tema."""
         from app.infrastructure.external.llm_service import (
             GroqProvider, GeminiProvider, NvidiaNimProvider, OllamaProvider,
-            MistralProvider, AnthropicProvider, OpenRouterProvider, CerebrasProvider,
+            MistralProvider, AnthropicProvider,
         )
 
         if provider_name == "groq":
@@ -177,23 +171,11 @@ class SmartLLMRouter:
             instance = AnthropicProvider(api_key=api_key, model=model)
         elif provider_name == "ollama":
             instance = OllamaProvider(base_url=base_url, model=model)
-        elif provider_name == "openrouter":
-            if not api_key:
-                raise ValueError("custom_provider='openrouter' requiere custom_api_key")
-            instance = OpenRouterProvider(api_key=api_key)
-            if model:
-                instance.chat_model = model
-        elif provider_name == "cerebras":
-            if not api_key:
-                raise ValueError("custom_provider='cerebras' requiere custom_api_key")
-            instance = CerebrasProvider(api_key=api_key)
-            if model:
-                instance.chat_model = model
         else:
             raise ValueError(
                 f"custom_provider='{provider_name}' no soportado para override por tema "
                 f"(soportados: 'groq', 'gemini', 'nvidia', 'openai', 'mistral', 'anthropic', "
-                f"'ollama', 'openrouter', 'cerebras'; 'vertex' requiere credenciales de "
+                f"'ollama'; 'vertex' requiere credenciales de "
                 f"proyecto GCP, no acepta una API key simple por tema)."
             )
 
@@ -215,7 +197,6 @@ class SmartLLMRouter:
         try:
             from app.infrastructure.external.llm_service import (
                 GroqProvider, GeminiProvider, VertexAIProvider, NvidiaNimProvider,
-                OpenRouterProvider, CerebrasProvider
             )
 
             # --- Vertex AI (Principal) ---
@@ -250,22 +231,6 @@ class SmartLLMRouter:
             else:
                 logger.warning("⚠️ Gemini disabled (no API key)")
                 self.provider_status["gemini"]["status"] = ProviderStatus.UNAVAILABLE
-
-            # --- Cerebras (baja latencia) --- agregado 2026-08-14
-            if settings.CEREBRAS_API_KEY:
-                self.providers["cerebras"] = CerebrasProvider()
-                logger.info("✅ Cerebras provider initialized")
-            else:
-                self.provider_status["cerebras"]["status"] = ProviderStatus.UNAVAILABLE
-                logger.warning("⚠️ Cerebras disabled (no API key)")
-
-            # --- OpenRouter (agregador multi-proveedor) --- agregado 2026-08-14
-            if settings.OPENROUTER_API_KEY:
-                self.providers["openrouter"] = OpenRouterProvider()
-                logger.info("✅ OpenRouter provider initialized")
-            else:
-                self.provider_status["openrouter"]["status"] = ProviderStatus.UNAVAILABLE
-                logger.warning("⚠️ OpenRouter disabled (no API key)")
         except Exception as e:
             logger.error(f"❌ Critical error initializing providers: {e}")
 

@@ -188,3 +188,26 @@ Este archivo actúa como la capa persistente de especificaciones de OpenSpec. To
 - **Casos de Borde:**
   - Un rediseño de header que agrega una segunda instancia del mismo ícono al DOM (header + avatar de estado vacío) puede volver ambiguo un selector de prueba que asumía una sola instancia (`querySelector` singular) — acotar el selector a una clase distintiva del elemento bajo prueba (ver `ChatInterfaceWidgetTheming.test.jsx`, corregido esta sesión).
   - Incidente real que motivó este contrato: el "Probador Sandbox" del admin (mockup separado, hardcodeado aparte) ya mostraba el ícono/color correctos, dando la falsa impresión de que el chat real también lo hacía. Ver `STATE.md` sesión 2026-08-14.
+
+### [CS-015] Búsqueda de texto RAG tolerante a puntuación, y motor LLM por tema resiliente a rollback de sesión
+- **Estado:** `IMPLEMENTADO` (2026-08-14)
+- **Requisitos:**
+  - `knowledge_base.py::search_in_knowledge_text_async` debe limpiar cada palabra de la consulta a solo caracteres de palabra Unicode (conservando acentos/ñ) antes de compararla con stopwords y unirla al patrón de `to_tsquery` — signos de puntuación pegados a una palabra (`¿cómo`, `(crs)?`) nunca deben llegar crudos a `to_tsquery`, que los interpreta como sintaxis (paréntesis = agrupación).
+  - `chat_service.py::process_query` debe capturar los valores del motor LLM personalizado por tema (`llm_provider`, `llm_model`, `custom_api_key`, `custom_base_url`) como variables planas de Python inmediatamente después de cargar `profile` desde `db_session`, antes de cualquier operación posterior (búsqueda RAG, rewriter) que pueda invocar `session.rollback()` sobre esa misma sesión. El código de después del punto de posible rollback nunca debe volver a leer esos valores directamente de `profile.*`.
+- **Restricciones:**
+  - Este contrato cubre específicamente el patrón "AsyncSession + rollback a mitad de request + atributo ORM leído después" — no es una prohibición general de acceder a atributos de `profile` en otras partes del flujo que no siguen a un posible rollback.
+- **Criterios de Aceptación:**
+  - Una consulta de usuario con signos de interrogación/paréntesis (ej. `"¿Cómo calcula Centinela el Centinela Risk Score (CRS)?"`) no produce `PostgresSyntaxError` ni `sqlalchemy.exc.MissingGreenlet`; el turno de chat se resuelve con una respuesta real (RAG o conocimiento general), no con el mensaje de "Sistema de Emergencia".
+- **Casos de Borde:**
+  - Incidente real que motivó este contrato: la consulta exacta de arriba encadenó los dos bugs (tsquery roto → rollback → `MissingGreenlet` al leer `profile.llm_provider`), tumbando el turno completo. Ver `MANUAL_TECNICO_DESARROLLADOR.md` §20.8 y `STATE.md` sesión 2026-08-14 (continuación).
+
+### [CS-016] Primer mensaje de una sesión de chat nueva debe aplicar la respuesta y apagar `loading`
+- **Estado:** `IMPLEMENTADO` (2026-08-14)
+- **Requisitos:**
+  - En `ChatInterface.jsx::sendMessage`, cuando no existe `currentSessionId` al invocar la función (sesión nueva creada dentro de la misma llamada), las comprobaciones que aplican la respuesta del asistente y apagan `loading` no deben depender exclusivamente de `activeSessionId === currentSessionId` — deben reconocer explícitamente el caso de sesión recién creada (`isNewSession`), ya que `currentSessionId` es un cierre de React que no refleja el `setCurrentSessionId` de la misma ejecución.
+- **Restricciones:**
+  - La protección original (no aplicar una respuesta a una sesión de la que el usuario ya se alejó) debe preservarse para sesiones YA EXISTENTES — este contrato solo cubre el caso de sesión nueva.
+- **Criterios de Aceptación:**
+  - Enviar el primer mensaje de una conversación nueva (sin sesión previa) siempre termina con `loading=false` y, si la petición tuvo éxito, con la respuesta del asistente visible — nunca con el spinner colgado indefinidamente, sin importar si el backend respondió con éxito o con error.
+- **Casos de Borde:**
+  - Incidente real que motivó este contrato: el widget embebido de Centinela-AI se quedó colgado en "Procesando consulta..." indefinidamente en el primer mensaje de una sesión de invitado nueva — reproducido con `frontend/tests/components/ChatInterfaceNewSessionSend.test.jsx`. Ver `STATE.md` sesión 2026-08-14 (continuación).

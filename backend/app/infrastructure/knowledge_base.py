@@ -1,5 +1,6 @@
 # Service Manager — Base de Conocimiento RAG (PostgreSQL + pgvector + Hybrid Retrieval)
 
+import re
 from typing import List, Dict, Any, Optional
 from app.core.logger import logger
 from sqlalchemy import text
@@ -9,31 +10,31 @@ from app.infrastructure.external.llm_service import get_local_embedding_service
 class KnowledgeBase:
     """
     Gestiona la base de conocimiento usando PostgreSQL + pgvector.
-    
+
     Implementa un orquestador de búsqueda híbrida (Retrieval-Augmented Generation) que combina:
     1. Búsqueda vectorial semántica (vía `pgvector` con distancia de coseno `<=>`).
     2. Búsqueda léxica por palabras clave / full-text search (`to_tsvector` / `ts_rank` y fallback `ILIKE`).
-    
+
     Patrón Singleton: garantiza la reutilización de la instancia de embedding service en toda la aplicación.
     """
-    
+
     _instance = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(KnowledgeBase, cls).__new__(cls)
         return cls._instance
-    
+
     def __init__(self):
         # Servicio local de incrustaciones de texto (SentenceTransformers)
         self.llm = get_local_embedding_service()
         logger.info("✅ KnowledgeBase: Inicializado con búsqueda en PostgreSQL+pgvector usando embeddings locales")
-    
+
     async def search_in_knowledge_async(
-        self, 
-        query: str, 
-        session=None, 
-        top_k: int = 3, 
+        self,
+        query: str,
+        session=None,
+        top_k: int = 3,
         filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
@@ -48,13 +49,13 @@ class KnowledgeBase:
         if session is None:
             logger.warning("⚠️ No se proporcionó sesión de BD")
             return []
-        
+
         # Filtros por defecto: Solo documentos activos/vigentes
         if filters is None:
             filters = {"is_active": True}
-        
+
         logger.info(f"🔍 Búsqueda híbrida (filtros: {filters}) para: {query[:100]}")
-        
+
         results_map = {}
 
         # 1. Búsqueda Léxica / Palabras clave (Full-Text Search)
@@ -70,19 +71,19 @@ class KnowledgeBase:
         try:
             # Generar incrustación vectorial para la consulta
             query_embedding = await self.llm.embed(query)
-            
+
             # Formatear el vector para la sintaxis nativa de pgvector/asyncpg '[v1, v2, ...]'
             vec_fmt = f"[{','.join(map(str, query_embedding))}]"
-            
+
             params = {
                 "query_embedding": vec_fmt,
                 "top_k": top_k,
                 "is_active": True
             }
-            
+
             # Consulta SQL optimizada exponiendo chunk_number y version_label para las citas de fuente
             sql_vector = text("""
-                SELECT 
+                SELECT
                     dc.id, dc.text, d.title, d.category, d.version_label,
                     (dc.embedding <=> CAST(:query_embedding AS vector)) as distance,
                     dc.chunk_number, d.id as document_id
@@ -92,10 +93,10 @@ class KnowledgeBase:
                 ORDER BY distance
                 LIMIT :top_k
             """)
-            
+
             result = await session.execute(sql_vector, params)
             rows = result.fetchall()
-            
+
             for row in rows:
                 chunk_id = row[0]
                 title    = row[2] or ""
@@ -112,7 +113,7 @@ class KnowledgeBase:
                     "relevance":    f"Distancia: {row[5]:.3f}",
                     "method":       "vector"
                 }
-            
+
         except Exception as e:
             logger.error(f"❌ Error en búsqueda vectorial: {e}")
             if session:
@@ -123,9 +124,9 @@ class KnowledgeBase:
         return final_results[:top_k * 2]
 
     async def search_in_knowledge_text_async(
-        self, 
-        query: str, 
-        session=None, 
+        self,
+        query: str,
+        session=None,
         top_k: int = 3,
         filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
@@ -136,37 +137,49 @@ class KnowledgeBase:
         if session is None:
             logger.warning("⚠️ No session provided to text search")
             return []
-        
+
         if filters is None:
             filters = {"is_active": True}
-        
+
         try:
             # Filtrado de palabras vacías (stopwords) en español
-            stopwords = {"¿", "?", "y", "o", "la", "el", "de", "para", "en", "son", "es", "que", "qué", "cuáles", "cuál", "cual", "cuales"}
-            keywords = [w.strip() for w in query.lower().split() if w.strip() not in stopwords and len(w.strip()) > 2]
-            
+            # HALLAZGO 2026-08-14: el split por espacios no separa signos de puntuación
+            # pegados a la palabra ("¿cómo", "(crs)?") -- esos tokens nunca coincidían con
+            # el stopword exacto "¿"/"?" y llegaban intactos a `to_tsquery`, que interpreta
+            # paréntesis/signos como sintaxis (operadores de agrupación), no como texto.
+            # Una consulta tan común como "¿Cómo calcula... (CRS)?" rompía la búsqueda con
+            # `PostgresSyntaxError` en vez de simplemente no encontrar resultados. Se limpia
+            # cada token a solo caracteres de palabra (Unicode, conserva acentos/ñ) antes de
+            # compararlo contra las stopwords y unirlo al patrón de `to_tsquery`.
+            stopwords = {"y", "o", "la", "el", "de", "para", "en", "son", "es", "que", "qué", "cuáles", "cuál", "cual", "cuales"}
+            keywords = []
+            for w in query.lower().split():
+                cleaned = re.sub(r"[^\w]", "", w, flags=re.UNICODE)
+                if cleaned and cleaned not in stopwords and len(cleaned) > 2:
+                    keywords.append(cleaned)
+
             if not keywords:
                 return []
-            
+
             # Construcción de query tsvector en sintaxis OR
             search_patterns = " | ".join(keywords)
-            
+
             params = {
                 "query_str": search_patterns,
                 "top_k": top_k,
                 "is_active": filters.get("is_active", True)
             }
-            
+
             filter_clauses = ["d.is_active = :is_active", "to_tsvector('spanish', dc.text) @@ to_tsquery('spanish', :query_str)"]
-            
+
             if filters.get("category"):
                 filter_clauses.append("d.category = :category")
                 params["category"] = filters["category"]
-            
+
             where_stmt = " AND ".join(filter_clauses)
-            
+
             sql_text = text(f"""
-                SELECT 
+                SELECT
                     dc.id,
                     dc.text,
                     d.title,
@@ -179,22 +192,22 @@ class KnowledgeBase:
                 ORDER BY relevance DESC
                 LIMIT :top_k
             """)
-            
+
             result = await session.execute(sql_text, params)
             rows = result.fetchall()
-            
+
             # Fallback a coincidencia ILIKE si tsvector no retorna resultados
             if len(rows) == 0:
                 conditions = " OR ".join([f"dc.text ILIKE :keyword_{i}" for i in range(len(keywords))])
                 where_clauses_ilike = [f"({conditions})"]
-                
+
                 if filters.get("is_active") is not None:
                     where_clauses_ilike.append("d.is_active = :is_active")
-                
+
                 where_str_ilike = " AND ".join(where_clauses_ilike)
-                
+
                 sql_query = text(f"""
-                    SELECT 
+                    SELECT
                         dc.id,
                         dc.text,
                         d.title,
@@ -205,15 +218,15 @@ class KnowledgeBase:
                     WHERE {where_str_ilike}
                     LIMIT :top_k
                 """)
-                
+
                 params_ilike = {f"keyword_{i}": f"%{kw}%" for i, kw in enumerate(keywords)}
                 params_ilike["top_k"] = top_k
                 if filters.get("is_active") is not None:
                     params_ilike["is_active"] = filters["is_active"]
-                
+
                 result = await session.execute(sql_query, params_ilike)
                 rows = result.fetchall()
-            
+
             results = []
             for row in rows:
                 title = row[2] or ""
@@ -228,15 +241,15 @@ class KnowledgeBase:
                     "version_label": ver,
                     "relevance":    "Búsqueda por palabras clave"
                 })
-            
+
             return results
-            
+
         except Exception as e:
             logger.error(f"❌ Text search error: {e}", exc_info=True)
             if session:
                 await session.rollback()
             return []
-    
+
     def search_in_knowledge(self, query: str) -> List[Dict[str, Any]]:
         """Método síncrono legacy (desaconsejado)."""
         logger.warning("⚠️ search_in_knowledge() llamada - debe usarse search_in_knowledge_async()")

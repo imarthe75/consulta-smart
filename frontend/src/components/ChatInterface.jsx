@@ -300,12 +300,20 @@ export default function ChatInterface({ isWidget = false }) {
         if (!input.trim()) return
 
         let activeSessionId = currentSessionId;
+        // `currentSessionId` es un cierre de este render — `setCurrentSessionId` de abajo
+        // no lo actualiza sino hasta el próximo render. Si esta es la primera consulta de
+        // una sesión nueva, `activeSessionId === currentSessionId` sería siempre falso
+        // (comparando el id nuevo contra el `null` capturado en el cierre), dejando la
+        // respuesta sin aplicar y el `finally` sin apagar `loading` — spinner colgado
+        // indefinidamente. `isNewSession` evita depender de esa comparación en ese caso.
+        let isNewSession = false;
 
         // Crear sesión dinámica en la primera interacción si no existe
         if (!activeSessionId) {
             try {
                 const sessionRes = await chatAPI.createSession('Consulta Widget')
                 activeSessionId = sessionRes.data.data.id
+                isNewSession = true
                 setCurrentSessionId(activeSessionId)
             } catch (err) {
                 setError('Error al iniciar sesión de chat: ' + err.message)
@@ -331,7 +339,7 @@ export default function ChatInterface({ isWidget = false }) {
                 { "category": profileId }
             )
 
-            if (activeSessionId === currentSessionId) {
+            if (isNewSession || activeSessionId === currentSessionId) {
                 const assistantMessage = {
                     role: 'assistant',
                     content: response.data.data.response,
@@ -341,11 +349,11 @@ export default function ChatInterface({ isWidget = false }) {
                 addMessage(assistantMessage)
             }
         } catch (err) {
-            if (activeSessionId === currentSessionId) {
+            if (isNewSession || activeSessionId === currentSessionId) {
                 setError('Error al enviar mensaje: ' + err.message)
             }
         } finally {
-            if (activeSessionId === currentSessionId) {
+            if (isNewSession || activeSessionId === currentSessionId) {
                 setLoading(false)
             }
         }

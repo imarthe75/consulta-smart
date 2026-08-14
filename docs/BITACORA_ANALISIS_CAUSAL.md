@@ -449,3 +449,37 @@ verdad compartida en vez de mantener las dos copias sincronizadas a mano.
   `.w-16.h-16 svg.lucide-bot` (clase distintiva del avatar real bajo prueba).
   3/3 pasan tras la corrección.
 - Las 3 suites juntas: `Test Files 3 passed (3) / Tests 6 passed (6)`.
+
+## 2026-08-14 (continuación 2) — Reporte en vivo del usuario: 3 bugs reales encadenados en una sola consulta, y reversión de OpenRouter/Cerebras
+
+**Síntoma reportado por el usuario (con captura de pantalla):** desde el widget embebido de Centinela-AI en producción, envió "¿Cómo calcula Centinela el Centinela Risk Score (CRS)?"; el mensaje se limpió del input pero la UI quedó colgada indefinidamente en "Procesando consulta...".
+
+**Investigación (logs reales de `consulta-smart-backend`, no suposiciones):**
+
+1. **`knowledge_base.py::search_in_knowledge_text_async`:** el filtro de stopwords (`{"¿", "?", ...}`) solo eliminaba tokens que coincidían EXACTAMENTE con esos símbolos — no separaba puntuación pegada a una palabra (`"¿cómo"`, `"(crs)?"`, producto de `.split()` por espacios). Esos tokens llegaban intactos al patrón OR de `to_tsquery`, que interpreta paréntesis como sintaxis de agrupación, no como texto: `PostgresSyntaxError: syntax error in tsquery: "¿cómo | calcula | centinela | centinela | risk | score | (crs)?"`.
+
+2. **`chat_service.py::process_query`:** el manejador de esa excepción en `knowledge_base.py` hace `await session.rollback()` (correcto y necesario para poder seguir usando la conexión). Efecto secundario real de `AsyncSession`: el rollback expira TODOS los objetos ya cargados en esa sesión, incluido `profile` (cargado varios segundos antes, al inicio del turno). El acceso posterior a `profile.llm_provider` (para resolver el motor LLM personalizado del tema) disparó un intento de recarga perezosa fuera de un contexto async válido: `sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called`. El manejador de excepción general de `process_query` capturó esto y devolvió "Lo siento, ocurrió un error interno..." con `provider: Sistema de Emergencia` — un error confuso que oculta la causa real (la sintaxis rota de `to_tsquery`).
+
+3. **`ChatInterface.jsx::sendMessage`:** independientemente de si el backend respondía bien o mal, el primer mensaje de una sesión de chat NUEVA (el caso típico del widget: cada visita de invitado empieza sin `currentSessionId`) nunca aplicaba la respuesta ni apagaba `loading`. `currentSessionId` es un cierre de React (`useState`) capturado en el render que invocó `sendMessage`; `setCurrentSessionId(nuevoId)`, llamado dentro de la misma ejecución, no se refleja en ese cierre hasta el siguiente render. Las comprobaciones de después (`activeSessionId === currentSessionId`, pensadas para descartar una respuesta si el usuario cambió de sesión mientras la petición estaba en curso) comparaban el id nuevo contra el `null` capturado en el cierre — siempre falso para una sesión recién creada. Este es el bug que explica el síntoma EXACTO reportado por el usuario: la UI se queda colgada sin importar el resultado del backend.
+
+**Corrección:**
+1. Cada palabra se limpia con `re.sub(r"[^\w]", "", w, flags=re.UNICODE)` (conserva acentos/ñ) antes de compararla con stopwords y unirla al patrón de `to_tsquery`.
+2. `llm_provider`/`llm_model`/`custom_api_key`/`custom_base_url` se capturan como variables planas de Python inmediatamente después de cargar `profile`, antes de la búsqueda RAG que puede hacer rollback.
+3. Bandera local `isNewSession` en `sendMessage`; las comprobaciones posteriores usan `isNewSession || activeSessionId === currentSessionId`.
+
+**Evidencia de verificación:**
+- `POST /api/v1/chat/query` con la consulta exacta reportada, vía un guest token real obtenido de `/api/v1/auth/guest`: respuesta grounded citando `BASE_CONOCIMIENTO_CHATBOT.md`, `provider: gemini (RAG)`, sin error.
+- `docker logs consulta-smart-backend` para esa misma request: sin `PostgresSyntaxError` ni `MissingGreenlet`, solo las queries SQL normales.
+- Nueva prueba de regresión de frontend `tests/components/ChatInterfaceNewSessionSend.test.jsx`: reproduce el envío del primer mensaje de una sesión sin `currentSessionId` previo, mockeando `createSession`+`sendQuery`, y confirma que `addMessage` (con la respuesta del asistente) y `setLoading(false)` se invocan — 1/1 pasa. Corrida junto con las 3 suites de la sesión anterior: `Test Files 4 passed (4) / Tests 7 passed (7)`.
+
+**Nota aparte (no un bug):** una captura intermedia del usuario mostró "Error al enviar mensaje: Request aborted". Confirmado por timestamp que fue colateral de que el agente estuviera editando `ChatInterface.jsx` en ese momento — Vite HMR recargó el módulo (`docker logs consulta-smart-frontend`: "hmr update /src/components/ChatInterface.jsx" a las 15:31:23) justo cuando la petición del usuario estaba en curso, abortándola client-side. No requirió corrección de código.
+
+**Lección de diagnóstico:** un `session.rollback()` correcto para recuperar una transacción abortada tiene un efecto secundario real con `AsyncSession` — expira objetos ya cargados, y accederlos después fuera de un `await` directo falla con un error (`MissingGreenlet`) que no menciona la causa original. Cuando un error de infraestructura async parece "sin relación" con el síntoma reportado, conviene revisar el log completo de la request de principio a fin, no solo la última excepción — la causa raíz suele estar unas líneas más arriba.
+
+## 2026-08-14 (continuación 2) — Reversión de OpenRouter/Cerebras
+
+**Decisión del usuario:** "elimina openroute/cerebras" — tras confirmar en la sesión anterior que ambas cuentas tenían credenciales válidas pero sin cuota utilizable (OpenRouter `429 free-models-per-day`, Cerebras `402 Payment required`), el usuario decidió no mantener el código de integración mientras no tengan capacidad real de servir tráfico.
+
+**Cambios:** removidos por completo de `smart_llm_router.py` (dict `self.providers`, `_init_custom_provider`, `_initialize_providers`, docstrings de prioridad), `llm_service.py` (clases `OpenRouterProvider`/`CerebrasProvider` eliminadas enteras) y `config.py` (settings `OPENROUTER_*`/`CEREBRAS_*` eliminados). La cascada global vuelve a 4 proveedores: Groq → Vertex → NVIDIA → Gemini. El timeout por-proveedor de 15s (reducido de 45s en la sesión anterior, para la cascada de 6) se mantuvo sin cambios — sigue siendo un valor razonable para la cascada de 4.
+
+**Evidencia de verificación:** backend recargado sin errores de import (`docker logs consulta-smart-backend`, `Application startup complete`); `grep -rin "openrouter|cerebras" backend/` sin resultados tras el cambio; prueba real de chat (saludo simple) tras el cambio responde correctamente (`provider: Sistema Local (Saludo)`, sin errores).

@@ -158,6 +158,20 @@ class ChatService:
             # 3. Guardrails Dinámicos y Filtro de Tópicos Prohibidos por Perfil
             forbidden_list = []
             rejection_text = "Consulta fuera de dominio."
+            # Capturados aquí como valores planos (no como atributos de `profile`) porque la
+            # búsqueda RAG que sigue más abajo puede hacer `session.rollback()` ante un error
+            # de SQL (ver knowledge_base.py) -- eso expira TODOS los objetos ya cargados en
+            # `db_session`, y con AsyncSession un acceso posterior a un atributo expirado
+            # (`profile.llm_provider` fuera de un `await` directo) revienta con
+            # `MissingGreenlet` en vez de simplemente recargar. Guardar los valores ahora
+            # evita depender de que `profile` siga "fresco" varios segundos después
+            # (incidente real 2026-08-14: una consulta con "¿...(CRS)?" rompía el tsquery,
+            # el rollback expiraba `profile`, y el turno de chat entero fallaba con un error
+            # interno confuso en vez de solo perder el contexto RAG de esa búsqueda).
+            custom_llm_provider = None
+            custom_llm_model = None
+            custom_llm_api_key = None
+            custom_llm_base_url = None
 
             if db_session:
                 try:
@@ -169,6 +183,10 @@ class ChatService:
                             forbidden_list = [t.strip().lower() for t in profile.forbidden_topics.split(',') if t.strip()]
                         if profile.rejection_message:
                             rejection_text = profile.rejection_message
+                        custom_llm_provider = profile.llm_provider
+                        custom_llm_model = profile.llm_model
+                        custom_llm_api_key = profile.custom_api_key
+                        custom_llm_base_url = profile.custom_base_url
                 except Exception as e:
                     logger.warning(f"Error evaluando guardrails de perfil {profile_id}: {e}")
 
@@ -301,22 +319,22 @@ class ChatService:
 
             # Evaluación de motor LLM por Tema/Perfil con Fallback Inteligente
             active_llm = llm
-            if profile and profile.llm_provider and profile.llm_provider != "default":
+            if custom_llm_provider and custom_llm_provider != "default":
                 try:
-                    logger.info(f"🔄 Usando motor LLM personalizado para tema '{profile_id}': {profile.llm_provider}")
+                    logger.info(f"🔄 Usando motor LLM personalizado para tema '{profile_id}': {custom_llm_provider}")
                     from app.infrastructure.external.smart_llm_router import SmartLLMRouter
                     from app.core.crypto import decrypt_secret
                     custom_router = SmartLLMRouter(
-                        custom_provider=profile.llm_provider,
-                        custom_api_key=decrypt_secret(profile.custom_api_key),
-                        custom_model=profile.llm_model,
-                        custom_base_url=profile.custom_base_url
+                        custom_provider=custom_llm_provider,
+                        custom_api_key=decrypt_secret(custom_llm_api_key),
+                        custom_model=custom_llm_model,
+                        custom_base_url=custom_llm_base_url
                     )
                     answer, provider = await custom_router.chat(messages=messages, system=system_prompt)
                 except Exception as custom_llm_err:
-                    logger.warning(f"⚠️ Error en motor custom ({profile.llm_provider}), ejecutando fallback a Smart Router Global: {custom_llm_err}")
+                    logger.warning(f"⚠️ Error en motor custom ({custom_llm_provider}), ejecutando fallback a Smart Router Global: {custom_llm_err}")
                     answer, provider = await llm.chat(messages=messages, system=system_prompt)
-                    provider = f"{provider} (Fallback por error en {profile.llm_provider})"
+                    provider = f"{provider} (Fallback por error en {custom_llm_provider})"
             else:
                 answer, provider = await llm.chat(messages=messages, system=system_prompt)
 
