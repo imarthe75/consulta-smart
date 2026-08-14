@@ -100,17 +100,19 @@ Este archivo actúa como la capa persistente de especificaciones de OpenSpec. To
   - El tema `general` nunca llega a este chequeo (bloqueado antes, por ser de solo lectura).
 
 ### [CS-008] Suite de pruebas de frontend funcional (`frontend/tests/`)
-- **Estado:** `PARCIAL` (2026-07-29) — 63 pruebas corren, 34 pasan; ver `MANUAL_TECNICO_DESARROLLADOR.md` §16.6
+- **Estado:** `PARCIAL` (2026-08-14) — 9/11 archivos pasan, 83/112 pruebas pasan; ver `MANUAL_TECNICO_DESARROLLADOR.md` §16.6 y §20.9
 - **Requisitos:**
   - `npm test` debe ejecutar la suite de `frontend/tests/` (Vitest + Testing Library + MSW) sin errores de resolución de módulos.
   - Las pruebas de stores (`tests/stores/Stores.test.js`) deben importar y ejercitar el código real de `src/stores/*.js`, nunca redefinir el store completo como un mock.
   - Debe existir al menos una prueba de regresión para el backdoor de escalación de privilegios eliminado en `authStore.js` (verificar que `login()` nunca asigna rol admin por contenido de email/username).
+  - Toda prueba de un componente debe mockear la forma REAL de sus dependencias (store/API) — nunca inventar una forma "razonable" sin verificar contra el código actual del componente. Ver `[CS-017]`.
 - **Restricciones:**
   - `tests/setup.ts` mockea `localStorage`/`sessionStorage` con `vi.fn()` sin almacenamiento real — las aserciones sobre persistencia deben verificar la llamada (`toHaveBeenCalledWith`), no un `getItem()` posterior.
 - **Criterios de Aceptación:**
   - `npm test` corre sin el error `Failed to resolve import "@testing-library/jest-dom"` (dependencias instaladas, `vite.config.js` con `test.setupFiles`).
 - **Casos de Borde / pendiente:**
-  - 29 pruebas siguen fallando por handlers de MSW faltantes en `tests/setup.ts` para varios endpoints, y 2 aserciones de `API.test.js` que necesitan `mswServer.use(...)` por test para simular errores del handler compartido de `/auth/login` — no se completó esta ronda, ver pendientes en `STATE.md`.
+  - `API.test.js` (11 pruebas) requiere un servidor real en `localhost:3003` levantado aparte — no es una prueba unitaria real, es una prueba de integración sin su dependencia disponible en CI/local por defecto.
+  - `SearchResults.test.jsx` (18 pruebas) tiene el mismo problema de fondo que tenían `ChatInterface.test.jsx`/`DocumentUpload.test.jsx`/`Navigation.test.jsx`/`Pages.test.jsx` antes de `[CS-017]` — probablemente prueba una API de componente/store desactualizada. No corregido esta ronda (fuera del alcance pedido).
 
 ### [CS-009] Resiliencia de arranque ante Postgres externo transitoriamente inalcanzable
 - **Estado:** `IMPLEMENTADO` (2026-08-12)
@@ -211,3 +213,15 @@ Este archivo actúa como la capa persistente de especificaciones de OpenSpec. To
   - Enviar el primer mensaje de una conversación nueva (sin sesión previa) siempre termina con `loading=false` y, si la petición tuvo éxito, con la respuesta del asistente visible — nunca con el spinner colgado indefinidamente, sin importar si el backend respondió con éxito o con error.
 - **Casos de Borde:**
   - Incidente real que motivó este contrato: el widget embebido de Centinela-AI se quedó colgado en "Procesando consulta..." indefinidamente en el primer mensaje de una sesión de invitado nueva — reproducido con `frontend/tests/components/ChatInterfaceNewSessionSend.test.jsx`. Ver `STATE.md` sesión 2026-08-14 (continuación).
+
+### [CS-017] Pruebas de frontend deben mockear la forma real de sus dependencias, no una API imaginaria
+- **Estado:** `IMPLEMENTADO` (2026-08-14) — aplicado a los 4 archivos identificados; el resto de la suite (`SearchResults.test.jsx`) queda pendiente, ver `[CS-008]`
+- **Requisitos:**
+  - Antes de escribir o corregir una prueba que mockea un store (Zustand) o un componente, se debe leer el componente/store REAL bajo prueba y usar exactamente su forma actual (nombres de campos, acciones, mensajes de texto visibles) — nunca una forma "razonable" inferida del nombre del componente.
+  - Cuando un rediseño de UI hace que el mismo texto/ícono aparezca más de una vez en el DOM (ej. dos `<select>` con las mismas opciones, un mensaje de bienvenida repetido en header + estado vacío), las pruebas deben usar las variantes `findAllBy*`/`getAllBy*` o acotar la búsqueda a un contenedor específico — no asumir que `getBy*` siempre encuentra una sola coincidencia.
+- **Restricciones:**
+  - Ninguna.
+- **Criterios de Aceptación:**
+  - `ChatInterface.test.jsx`, `DocumentUpload.test.jsx`, `Navigation.test.jsx` y `Pages.test.jsx` corren sin errores de sintaxis ni de forma de mock, y sus aserciones reflejan comportamiento real verificable del componente (no solo "no truena").
+- **Casos de Borde:**
+  - Los 4 archivos, previos a esta corrección, tenían DOS problemas superpuestos: (1) sintaxis TypeScript (`as any`, `as HTMLInputElement`, anotaciones de parámetro) en archivos `.jsx` puro, rechazada por el transform de Oxc/Vite; (2) una vez resuelto (1), se reveló que las aserciones probaban una API de componente/store que nunca coincidió con el código real actual — `LoginPage` real es SSO vía Authentik/OIDC (sin formulario email/password ni registro, que sí probaba la versión anterior), `Navigation` real es un sidebar fijo sin estados condicionales de "autenticado/no autenticado", `DocumentUpload`/`documentStore` reales no tienen `uploadDocument`/`isUploading`/`getDocuments`. Reescritos contra el código real, verificados con `docker exec consulta-smart-frontend npx vitest run`. Ver `STATE.md` sesión 2026-08-14 (continuación 3).
