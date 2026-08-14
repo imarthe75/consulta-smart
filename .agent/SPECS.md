@@ -204,7 +204,7 @@ Este archivo actúa como la capa persistente de especificaciones de OpenSpec. To
   - Incidente real que motivó este contrato: la consulta exacta de arriba encadenó los dos bugs (tsquery roto → rollback → `MissingGreenlet` al leer `profile.llm_provider`), tumbando el turno completo. Ver `MANUAL_TECNICO_DESARROLLADOR.md` §20.8 y `STATE.md` sesión 2026-08-14 (continuación).
 
 ### [CS-016] Primer mensaje de una sesión de chat nueva debe aplicar la respuesta y apagar `loading`
-- **Estado:** `IMPLEMENTADO` (2026-08-14)
+- **Estado:** `IMPLEMENTADO` (2026-08-14) — ver también `[CS-020]`, un segundo bug distinto encontrado en el mismo flujo
 - **Requisitos:**
   - En `ChatInterface.jsx::sendMessage`, cuando no existe `currentSessionId` al invocar la función (sesión nueva creada dentro de la misma llamada), las comprobaciones que aplican la respuesta del asistente y apagan `loading` no deben depender exclusivamente de `activeSessionId === currentSessionId` — deben reconocer explícitamente el caso de sesión recién creada (`isNewSession`), ya que `currentSessionId` es un cierre de React que no refleja el `setCurrentSessionId` de la misma ejecución.
 - **Restricciones:**
@@ -250,3 +250,15 @@ Este archivo actúa como la capa persistente de especificaciones de OpenSpec. To
   - Subir el mismo archivo a un tema DISTINTO no se bloquea.
 - **Casos de Borde:**
   - Motivado por sospecha del usuario de un documento duplicado para Centinela-AI — verificado contra la BD real que NO había duplicado activo en ese momento (`SELECT` directo: 1 documento, 112 chunks distintos); la funcionalidad de prevención se implementó de todos modos por ser una petición explícita y válida hacia el futuro. Verificado con un script real (no mockeado) que inserta/consulta/limpia contra Postgres, confirmando aislamiento por tenant (mismo hash en categoría distinta → MISS). Ver `STATE.md` sesión 2026-08-14 (continuación 4).
+
+### [CS-020] El mensaje del usuario no debe borrarse por la carga de historial al crear una sesión nueva
+- **Estado:** `IMPLEMENTADO` (2026-08-14)
+- **Requisitos:**
+  - El `useEffect` de `ChatInterface.jsx` que carga el historial de la sesión activa (keyed en `currentSessionId`) no debe ejecutarse la primera vez que `currentSessionId` cambia como consecuencia de que `sendMessage` acaba de crear una sesión nueva para el envío en curso — en ese instante el backend aún no tiene guardado el mensaje del usuario, y cargar el historial "vacío" borra la burbuja agregada de forma optimista.
+  - El mismo efecto SÍ debe seguir ejecutándose normalmente para cualquier otro cambio de `currentSessionId` (el usuario selecciona una conversación existente distinta desde la barra lateral).
+- **Restricciones:**
+  - La bandera que controla esto (`skipNextHistoryFetchRef`) debe ser un `useRef`, no un `useState` — no debe disparar un render adicional ni competir en el orden de aplicación de efectos.
+- **Criterios de Aceptación:**
+  - Enviar el primer mensaje de una sesión nueva nunca invoca `clearMessages()`/`setMessages()` como resultado de la carga de historial, ni llama a `chatAPI.getSession()` en absoluto para esa sesión recién creada.
+- **Casos de Borde:**
+  - Incidente real que motivó este contrato: el usuario reportó "cada que hago una pregunta sigue desapareciendo del chat" — confirmado con logs reales del backend (`GET /chat/sessions/{id}` 700ms después de `POST /chat/sessions`, antes de que `POST /chat/query` completara) que cada pregunta probada creaba una sesión nueva y disparaba la carrera. Es un bug DISTINTO e independiente de `[CS-016]` (cierre obsoleto de React) y del Blindaje duplicando tiempo de espera (`[CS-018]`) — los tres coexistían con síntomas distintos. Prueba de regresión en `ChatInterfaceNewSessionSend.test.jsx`, verificada como capaz de detectar el bug (falla real al revertir el fix temporalmente, pasa al restaurarlo). Ver `STATE.md` sesión 2026-08-14 (continuación 5).

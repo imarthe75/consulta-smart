@@ -32,6 +32,12 @@ export default function ChatInterface({ isWidget = false }) {
     const [newTitle, setNewTitle] = useState('')
     // Referencia al final del contenedor de mensajes para autoscroll
     const messagesEndRef = useRef(null)
+    // Evita que el efecto de "cargar historial al cambiar de sesión" (más abajo)
+    // sobreescriba el mensaje del usuario recién agregado de forma optimista cuando
+    // la sesión es NUEVA -- el backend todavía no tiene ese mensaje guardado en el
+    // instante en que se crea la sesión, así que la carga de historial lo encontraba
+    // vacío y lo borraba vía clearMessages() antes de que la respuesta llegara.
+    const skipNextHistoryFetchRef = useRef(false)
 
     // Store global de autenticación de usuario
     const { user, logout: storeLogout } = useAuthStore()
@@ -209,6 +215,10 @@ export default function ChatInterface({ isWidget = false }) {
      * Carga los mensajes de la sesión activa al cambiar de conversación.
      */
     useEffect(() => {
+        if (skipNextHistoryFetchRef.current) {
+            skipNextHistoryFetchRef.current = false
+            return
+        }
         if (currentSessionId) {
             const fetchHistory = async () => {
                 try {
@@ -314,6 +324,7 @@ export default function ChatInterface({ isWidget = false }) {
                 const sessionRes = await chatAPI.createSession('Consulta Widget')
                 activeSessionId = sessionRes.data.data.id
                 isNewSession = true
+                skipNextHistoryFetchRef.current = true
                 setCurrentSessionId(activeSessionId)
             } catch (err) {
                 setError('Error al iniciar sesión de chat: ' + err.message)
