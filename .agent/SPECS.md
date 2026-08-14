@@ -225,3 +225,28 @@ Este archivo actúa como la capa persistente de especificaciones de OpenSpec. To
   - `ChatInterface.test.jsx`, `DocumentUpload.test.jsx`, `Navigation.test.jsx` y `Pages.test.jsx` corren sin errores de sintaxis ni de forma de mock, y sus aserciones reflejan comportamiento real verificable del componente (no solo "no truena").
 - **Casos de Borde:**
   - Los 4 archivos, previos a esta corrección, tenían DOS problemas superpuestos: (1) sintaxis TypeScript (`as any`, `as HTMLInputElement`, anotaciones de parámetro) en archivos `.jsx` puro, rechazada por el transform de Oxc/Vite; (2) una vez resuelto (1), se reveló que las aserciones probaban una API de componente/store que nunca coincidió con el código real actual — `LoginPage` real es SSO vía Authentik/OIDC (sin formulario email/password ni registro, que sí probaba la versión anterior), `Navigation` real es un sidebar fijo sin estados condicionales de "autenticado/no autenticado", `DocumentUpload`/`documentStore` reales no tienen `uploadDocument`/`isUploading`/`getDocuments`. Reescritos contra el código real, verificados con `docker exec consulta-smart-frontend npx vitest run`. Ver `STATE.md` sesión 2026-08-14 (continuación 3).
+
+### [CS-018] Presupuesto de tiempo acotado para el Blindaje anti-alucinación (Grounding Check)
+- **Estado:** `IMPLEMENTADO` (2026-08-14)
+- **Requisitos:**
+  - `chat_service.py::process_query` debe envolver la llamada a `_verify_grounding` en `asyncio.wait_for(timeout=8.0)`. Si se excede, se usa la respuesta original sin verificar (mismo comportamiento de "fail open" que el except interno de `_verify_grounding`).
+- **Restricciones:**
+  - Este timeout es independiente de los timeouts por-proveedor del router (15s cada uno) — el Blindaje puede intentar como máximo un proveedor completo antes de que este límite lo corte, no una cascada completa.
+- **Criterios de Aceptación:**
+  - En un escenario de cascada de proveedores degradada (ej. 2+ proveedores fallando por timeout/rate-limit), el Blindaje nunca añade más de ~8s al tiempo total de respuesta del turno, sin importar cuántos proveedores intente internamente.
+- **Casos de Borde:**
+  - Incidente real que motivó este contrato: `_verify_grounding` hace su propia llamada independiente a `_get_best_provider()`, sin memoria de que un proveedor (ej. NVIDIA) acababa de fallar por timeout segundos antes en el mismo turno para la respuesta principal — lo reintentaba igual, duplicando ~30s de espera para una verificación opcional que de por sí ya falla abierto. Ver `STATE.md` sesión 2026-08-14 (continuación 4).
+
+### [CS-019] Deduplicación de documentos RAG por hash de contenido, por tenant
+- **Estado:** `IMPLEMENTADO` (2026-08-14) — protección hacia adelante; documentos ya existentes antes de este contrato no tienen `content_hash` retroactivo
+- **Requisitos:**
+  - `DocumentModel.content_hash` (SHA-256 hex del contenido crudo del archivo subido, no del texto extraído) debe calcularse y persistirse en cada subida vía `admin.py::upload_chatbot_document`.
+  - Antes de procesar (parsear/chunkear/embeber) un archivo subido, se debe rechazar con `409 Conflict` si ya existe un `Document` **activo** (`is_active=True`) con el mismo `content_hash` **en el mismo `category` (tenant)**.
+- **Restricciones:**
+  - El alcance de la deduplicación es POR TENANT, no global — subir el mismo archivo a dos temas distintos a propósito es un caso de uso válido, no un duplicado accidental.
+  - Documentos subidos ANTES de este contrato tienen `content_hash IS NULL` — no cuentan como duplicado de nada hasta que alguien los vuelva a subir (momento en el que sí queda registrado su hash real).
+- **Criterios de Aceptación:**
+  - Subir el mismo archivo (bytes idénticos) dos veces al mismo tema devuelve `409` en el segundo intento, con el título y fecha del documento ya existente en el mensaje de error.
+  - Subir el mismo archivo a un tema DISTINTO no se bloquea.
+- **Casos de Borde:**
+  - Motivado por sospecha del usuario de un documento duplicado para Centinela-AI — verificado contra la BD real que NO había duplicado activo en ese momento (`SELECT` directo: 1 documento, 112 chunks distintos); la funcionalidad de prevención se implementó de todos modos por ser una petición explícita y válida hacia el futuro. Verificado con un script real (no mockeado) que inserta/consulta/limpia contra Postgres, confirmando aislamiento por tenant (mismo hash en categoría distinta → MISS). Ver `STATE.md` sesión 2026-08-14 (continuación 4).

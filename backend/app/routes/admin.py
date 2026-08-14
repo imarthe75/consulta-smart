@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import logging
+import hashlib
 import fitz  # PyMuPDF
 
 from app.core.database import get_session
@@ -849,6 +850,26 @@ async def upload_chatbot_document(
 
     try:
         contents = await file.read()
+        # Hash del contenido crudo del archivo (no del texto extraído) -- detecta re-subidas
+        # exactas del mismo binario antes de gastar tiempo parseando/chunkeando/embebiendo de
+        # nuevo. Alcance por tenant (`category`): el mismo PDF regulatorio subido a propósito
+        # a dos temas distintos es un caso de uso válido, no un duplicado accidental.
+        content_hash = hashlib.sha256(contents).hexdigest()
+        target_category = category or "general"
+        existing = await db.execute(
+            select(Document).where(
+                Document.content_hash == content_hash,
+                Document.category == target_category,
+                Document.is_active == True,
+            )
+        )
+        duplicate_doc = existing.scalars().first()
+        if duplicate_doc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Este documento ya fue subido antes para este tema (\"{duplicate_doc.title}\", {duplicate_doc.created_at.strftime('%Y-%m-%d')}). Elimínalo primero si quieres reemplazarlo."
+            )
+
         extracted_text = ""
 
         if file_ext == "pdf":
@@ -876,6 +897,7 @@ async def upload_chatbot_document(
             status="indexed",
             is_active=True,
             token_count=len(extracted_text.split()),
+            content_hash=content_hash,
             doc_metadata={
                 "original_filename": file.filename,
                 "doc_type": doc_type or "reglamentos"

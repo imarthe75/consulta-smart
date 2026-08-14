@@ -55,6 +55,9 @@ class DocumentModel(Base):
     effective_date = Column(DateTime, nullable=True)
     expiration_date = Column(DateTime, nullable=True)
     doc_metadata = Column(JSON, default={})
+    # SHA-256 del contenido crudo del archivo subido, para detectar re-subidas exactas
+    # del mismo documento antes de indexarlo de nuevo (ver admin.py::upload_chatbot_document).
+    content_hash = Column(String(64), nullable=True, index=True)
     processing_error = Column(Text, nullable=True)
     processing_started_at = Column(DateTime, nullable=True)
     processing_completed_at = Column(DateTime, nullable=True)

@@ -341,13 +341,30 @@ class ChatService:
             # 7. Blindaje de Alucinaciones (Grounding Verification)
             if settings.STRICT_GROUNDING and relevant_docs:
                 logger.info("🛡️ Iniciando Blindaje (Grounding Check)...")
-                is_safe, corrected_answer = await self._verify_grounding(answer, relevant_docs, query)
-                if not is_safe:
-                    logger.warning("🚨 Alucinación detectada y bloqueada por el Blindaje")
-                    answer = corrected_answer
-                    provider = f"{provider} (Verified/Corrected)"
-                else:
-                    logger.info("✅ Respuesta validada por Grounding")
+                try:
+                    # HALLAZGO 2026-08-14: `_verify_grounding` hace su propia llamada
+                    # independiente a `_get_best_provider()`, que puede reintentar un
+                    # proveedor que acaba de fallar/tardar en la respuesta principal
+                    # de este mismo turno (el router solo lo marca DEGRADED tras 4
+                    # timeouts acumulados, no tras el primero). En un momento de
+                    # cascada degradada esto duplicaba el tiempo total de espera
+                    # (~30-45s extra) para una verificación que de por sí falla
+                    # "abierto" (usa la respuesta original) si no puede completarse.
+                    # Se acota a un presupuesto corto: es una red de seguridad
+                    # opcional sobre una respuesta que el usuario ya recibió a
+                    # tiempo, no vale la pena hacerlo esperar el doble por ella.
+                    is_safe, corrected_answer = await asyncio.wait_for(
+                        self._verify_grounding(answer, relevant_docs, query),
+                        timeout=8.0
+                    )
+                    if not is_safe:
+                        logger.warning("🚨 Alucinación detectada y bloqueada por el Blindaje")
+                        answer = corrected_answer
+                        provider = f"{provider} (Verified/Corrected)"
+                    else:
+                        logger.info("✅ Respuesta validada por Grounding")
+                except asyncio.TimeoutError:
+                    logger.warning("⏱️ Blindaje excedió 8s, se usa la respuesta original sin verificar")
 
             # ── Construcción de fuentes para la UI ───────────────────────────
             # Se construye una lista de objetos enriquecidos (no strings planos)

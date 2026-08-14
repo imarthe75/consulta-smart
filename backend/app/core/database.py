@@ -36,6 +36,7 @@ _SCHEMA_PATCHES = [
     ("chatbot_profiles", "prompt_target_audience", "VARCHAR(255)"),
     ("chatbot_profiles", "prompt_organization", "VARCHAR(255)"),
     ("chatbot_profiles", "prompt_sector", "VARCHAR(255)"),
+    ("documents", "content_hash", "VARCHAR(64)"),
 ]
 
 
@@ -47,6 +48,13 @@ async def _apply_schema_patches(conn):
             )
         except Exception as e:
             logger.warning(f"No se pudo aplicar el parche de esquema {table}.{column}: {e}")
+
+    try:
+        await conn.execute(
+            text('CREATE INDEX IF NOT EXISTS ix_documents_content_hash ON documents (content_hash)')
+        )
+    except Exception as e:
+        logger.warning(f"No se pudo crear el índice de content_hash: {e}")
 
 
 # INCIDENTE 2026-08-10: al reiniciar el host, consulta-smart-backend arrancó antes de
