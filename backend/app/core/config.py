@@ -87,10 +87,17 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "groq")
     GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
     # "gemini-1.5-flash" fue descontinuado por Google (404 NOT_FOUND real, incidente
-    # 2026-08-13 -- ver docs/BITACORA_ANALISIS_CAUSAL.md). Se usa el alias "-latest" que
-    # Google mantiene apuntando siempre al modelo flash vigente, en vez de una version
-    # especifica que puede descontinuarse sin aviso.
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+    # 2026-08-13 -- ver docs/BITACORA_ANALISIS_CAUSAL.md). Se probó primero el alias
+    # "-latest" (siempre apunta al flash vigente sin mantenimiento), pero incidente
+    # 2026-08-14: la cuota gratuita real de Google varía MUCHO por modelo, no solo por
+    # cuenta -- "gemini-3.1-flash-lite" tiene 500 RPD / 15 RPM / 250K TPM (el mayor
+    # cupo diario real entre los modelos de texto disponibles con la key vigente),
+    # contra apenas 20 RPD / 5 RPM de la línea "Flash" a la que el alias suele apuntar.
+    # Se fija explícitamente el modelo con más cupo en vez de usar el alias, priorizando
+    # disponibilidad real sobre "siempre la versión más nueva". Verificado con una
+    # llamada real de generateContent antes de fijarlo. Revisar de nuevo si Google
+    # cambia las cuotas gratuitas por modelo.
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
     GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")
     GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 

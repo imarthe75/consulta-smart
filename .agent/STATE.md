@@ -297,6 +297,26 @@ Este bug es INDEPENDIENTE de los dos ya corregidos antes (cierre obsoleto de `ac
 - *Un `useEffect` keyed en un id de sesión que sirve DOS propósitos distintos ("cambié a otra conversación existente" vs. "acabo de crear una conversación nueva para este mismo envío") necesita distinguir esos dos casos explícitamente — no asumir que todo cambio de ese id significa lo mismo. Un flag por `useRef` consumido una sola vez es más simple que intentar diferenciarlo dentro del propio efecto.*
 - *Cuando el patrón de tráfico real (logs con timestamp) muestra una petición GET de lectura inmediatamente después de una petición POST de escritura sobre el mismo recurso, sospechar de una carrera de lectura-antes-de-escribir, especialmente si el síntoma es "algo que acabo de agregar desaparece".*
 
+## 🛠️ Sesión 2026-08-14 (continuación 6) — Rotación de API keys de Gemini/Groq + selección de modelo Gemini por cuota real
+
+### Contexto
+El usuario actualizó `GOOGLE_API_KEY` en `.env` y compartió la tabla completa de cuotas gratuitas por modelo de la consola de Google AI Studio, pidiendo usar "el más adecuado". También indicó haber rotado `GROQ_API_KEY`.
+
+### Selección de modelo Gemini
+En vez de confiar en los nombres de la consola (que no siempre coinciden 1:1 con los IDs reales de la API), se listaron los modelos REALES disponibles con la key nueva vía `GET /v1beta/models` — confirmando que `gemini-3.1-flash-lite` existe y es invocable. Comparado contra la tabla de cuotas del usuario: **500 RPD / 15 RPM / 250K TPM**, muy por encima de la línea "Flash" (Gemini 3.5/3.6/3.7 Flash: solo 20 RPD / 5 RPM) a la que el alias `gemini-flash-latest` (usado hasta ahora) probablemente apunta. Dado que la disponibilidad real de cuota ha sido el problema recurrente de toda la sesión, se priorizó cupo diario sobre "siempre la versión más nueva vía alias" — cambio documentado con justificación explícita en el comentario de `config.py`, para que quede claro por qué se abandonó el patrón de alias usado en incidentes anteriores.
+
+**Verificado con una llamada real** a `generateContent` antes de fijarlo en código (no solo listado) — respuesta correcta. Tras recrear el contenedor (`docker compose up -d --force-recreate backend`, imprescindible porque `docker restart` no relee `.env`), una consulta real end-to-end por la app completa fue respondida correctamente citando fuentes RAG reales, con `*LLM: gemini (RAG)*` en el pie de respuesta — confirmando que tanto la key nueva como el modelo fijado funcionan en producción, no solo en una prueba aislada.
+
+### Hallazgo real sobre la rotación de Groq
+La nueva `GROQ_API_KEY` autentica correctamente (`200 OK` en una llamada de chat-completion real), pero **la cuota diaria (100,000 TPD) sigue exhausta** — el error 429 real mostró el mismo `organization: org_01knjfhncqfqh8ryn1peg9nww8` y el mismo uso acumulado (~99,730/100,000) que con la key anterior. Conclusión: Groq limita la cuota gratuita **por cuenta/organización**, no por API key individual — generar una key nueva bajo la misma cuenta no otorga cuota fresca. Reportado honestamente al usuario en vez de asumir que "la key es nueva, debería tener cuota nueva".
+
+### Evidencia de verificación
+- `GET https://generativelanguage.googleapis.com/v1beta/models` con la key nueva: 200 OK, `gemini-3.1-flash-lite` listado entre los modelos con `generateContent` soportado.
+- `POST .../gemini-3.1-flash-lite:generateContent` real: respuesta correcta ("PRUEBA-OK").
+- `POST https://api.groq.com/.../chat/completions` con la key nueva: 200 OK con headers `x-ratelimit-*` reales (límite por-minuto sano: 998/1000 requests, 11962/12000 tokens) — pero el límite DIARIO (que no aparece en esos headers) seguía agotado, confirmado con un segundo request real vía la app que devolvió el mismo 429 con el mismo `org_id`.
+- `docker logs` tras recrear el contenedor: `✅ GeminiProvider initialized (Unified SDK): gemini-3.1-flash-lite`.
+- Consulta real de extremo a extremo vía `/api/v1/chat/query` (sesión/mensajes de prueba limpiados después): respuesta grounded correcta, `provider: gemini (RAG)`.
+
 ## 🚧 Pendientes
 - **Corrección a una entrada previa de este mismo archivo:** la sesión del 2026-08-14 reportó erróneamente que `MANUAL_TECNICO_DESARROLLADOR.md` "no existe en el repo". Eso fue un error de investigación propio (solo se buscó dentro de `consulta-smart/`) — el archivo sí existe, en `/opt/casmart/MANUAL_TECNICO_DESARROLLADOR.md` (raíz del monorepo, compartido, fuera de este submódulo git). Ya fue actualizado con la Sexta Ronda (§20) documentando el trabajo de esta sesión. Queda como nota de higiene, no como pendiente real: `CLAUDE.md`/`README.md` de este submódulo citan el archivo sin prefijo de ruta pese a vivir fuera del propio repo git — no se tocó esa estructura sin confirmación explícita del usuario.
 - OpenRouter y Cerebras: **removidos del código el 2026-08-14** por decisión explícita del usuario (credenciales válidas pero sin cuota de cuenta usable — 429/402 en llamada real de chat-completion). La cascada volvió a 4 proveedores (Groq, Vertex, NVIDIA, Gemini). Si el usuario agrega billing a esas cuentas en el futuro y quiere reincorporarlos, el patrón de implementación queda documentado en `docs/BITACORA_ANALISIS_CAUSAL.md` (incidente 2026-08-14) y en el historial de git.
