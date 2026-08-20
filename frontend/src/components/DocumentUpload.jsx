@@ -287,11 +287,14 @@ export default function DocumentUpload({ tenantId = 'all' }) {
             {/* Upload Area & File Selection Form */}
             <div className="space-y-4">
                 <div
+                    role="button"
+                    tabIndex={0}
                     onDragEnter={handleDrag}
                     onDragLeave={handleDrag}
                     onDragOver={handleDrag}
                     onDrop={handleDrop}
                     onClick={() => fileInputRef.current?.click()}
+                    onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && fileInputRef.current?.click()}
                     className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
                         dragActive
                             ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20'

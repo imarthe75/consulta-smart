@@ -1,10 +1,15 @@
 
+import os
+import sys
 import google.generativeai as genai
 
 def list_models():
-    api_key = "***GEMINI_KEY_REDACTED***"
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("❌ Falta la variable de entorno GEMINI_API_KEY", file=sys.stderr)
+        sys.exit(1)
     genai.configure(api_key=api_key)
-    
+
     print("--- Listing Available Models for API KEY ---")
     try:
         for m in genai.list_models():

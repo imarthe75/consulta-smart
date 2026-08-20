@@ -46,7 +46,7 @@ def process_document_task(self, document_id: str):
     from app.application.usecases.document_usecases import ProcessDocumentUseCase
 
     logger.info(f"[Celery] Received document processing task: {document_id}")
-    
+
     try:
         # 1. Setup dependencies manually since Celery is outside FastAPI DI
         db = SessionLocal()
@@ -54,7 +54,7 @@ def process_document_task(self, document_id: str):
         vector_store = PostgresVectorStore(db)
         file_storage = SeaweedFSFileStorage()
         llm_service = get_llm_provider()
-        
+
         # 2. Initialize UseCase
         use_case = ProcessDocumentUseCase(
             document_repo=document_repo,
@@ -62,14 +62,14 @@ def process_document_task(self, document_id: str):
             file_storage=file_storage,
             llm_service=llm_service
         )
-        
+
         # 3. Execute processing (blocking call due to run_async)
         result = run_async(use_case.execute(document_id))
-        
+
         db.close()
         logger.info(f"[Celery] Successfully processed document {document_id}")
         return result
-        
+
     except Exception as e:
         logger.error(f"[Celery] Fatal error processing document {document_id}: {str(e)}")
         # Exponential backoff retry
@@ -88,7 +88,7 @@ def generate_embeddings_local_task(self, document_id: str = None, limit: int = N
     """
     Generar embeddings locales con sentence-transformers
     Se ejecuta automáticamente después de procesar un documento
-    
+
     Args:
         document_id: UUID del documento (opcional, para documentos específicos)
         limit: Máximo de chunks a procesar (opcional)
@@ -97,30 +97,30 @@ def generate_embeddings_local_task(self, document_id: str = None, limit: int = N
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy import text
     from app.infrastructure.external.local_embedding_service import LocalEmbeddingService
-    
+
     logger.info(f"[Celery] Iniciando generación de embeddings locales (doc: {document_id})")
-    
+
     try:
         # Inicializar servicio de embeddings
         embedding_service = LocalEmbeddingService()
-        
+
         # Conectar a BD
         engine = create_async_engine(settings.DATABASE_URL, echo=False)
         SessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        
+
         # Ejecutar generación
         processed = run_async(
             _generate_embeddings_async(
-                SessionLocal, 
-                embedding_service, 
-                document_id, 
+                SessionLocal,
+                embedding_service,
+                document_id,
                 limit
             )
         )
-        
+
         logger.info(f"[Celery] ✓ Generados {processed} embeddings locales")
         return {"status": "success", "embeddings_generated": processed}
-    
+
     except Exception as e:
         logger.error(f"[Celery] Error generando embeddings: {str(e)}")
         # Reintentar con backoff
@@ -136,46 +136,46 @@ async def _generate_embeddings_async(
 ) -> int:
     """Helper async para generar embeddings"""
     from sqlalchemy import text
-    
+
     async with SessionLocal() as session:
         # Obtener chunks sin embeddings
         query = "SELECT id, text FROM document_chunks WHERE embedding IS NULL"
         params = {}
-        
+
         if document_id:
             query += " AND document_id = :document_id"
             params["document_id"] = document_id
-        
+
         query += " ORDER BY created_at ASC"
-        
+
         if limit:
-            query += f" LIMIT {limit}"
-        
+            query += f" LIMIT {int(limit)}"
+
         result = await session.execute(text(query), params)
         chunks = result.fetchall()
-        
+
         if not chunks:
             logger.debug("[Celery] No hay chunks pendientes")
             return 0
-        
+
         logger.info(f"[Celery] Procesando {len(chunks)} chunks")
-        
+
         # Generar embeddings en batch
         texts = [chunk[1] for chunk in chunks]
         chunk_ids = [chunk[0] for chunk in chunks]
-        
+
         embeddings_list = await embedding_service.embed_batch(texts, batch_size=32)
-        
+
         # Guardar embeddings
         updated = 0
         for chunk_id, embedding in zip(chunk_ids, embeddings_list):
             # Convertir a array de PostgreSQL (formato: [1.0, 2.0, 3.0, ...])
             embedding_str = "[" + ",".join(str(float(x)) for x in embedding) + "]"
-            
+
             # Usar CAST directo en la query, no en el parámetro
             await session.execute(
                 text("""
-                    UPDATE document_chunks 
+                    UPDATE document_chunks
                     SET embedding = CAST(:embedding_val AS vector)
                     WHERE id = :chunk_id_val
                 """),
@@ -185,8 +185,8 @@ async def _generate_embeddings_async(
                 }
             )
             updated += 1
-        
+
         await session.commit()
         logger.info(f"[Celery] ✓ {updated} embeddings guardados")
-        
+
         return updated

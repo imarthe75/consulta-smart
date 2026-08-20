@@ -431,7 +431,6 @@ class SmartLLMRouter:
                 elif "rate limit" in error_str or "quota" in error_str or "429" in error_str:
                     self.provider_status[provider_name]["status"] = ProviderStatus.RATE_LIMITED
                     self.provider_status[provider_name]["rate_limit_until"] = datetime.now() + timedelta(minutes=1)
-                    self.provider_status[provider_name]["rate_limit_until"] = datetime.now() + timedelta(minutes=1)
                     logger.warning(f"⏱️ {provider_name} rate limited, waiting 1 minute")
 
                 else:

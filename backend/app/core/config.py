@@ -32,7 +32,11 @@ class Settings(BaseSettings):
     DB_HOST: str = os.getenv("DB_HOST", "postgres")
     DB_PORT: int = int(os.getenv("DB_PORT", "5432"))
     DB_USER: str = os.getenv("DB_USER", "consultarpp_user")
-    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "***DB_PASSWORD_REDACTED***")
+    # Sin fallback a un secreto real: en dev sin Vault, este valor no autentica contra
+    # ningún Postgres real (hallazgo de auditoría: el valor anterior era la contraseña
+    # real, expuesta en el repo). En producción, Vault sobreescribe esto obligatoriamente
+    # (ver _REQUIRED_VAULT_KEYS más abajo) o el proceso no arranca.
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "changeme_local_dev_only")
     DB_NAME: str = os.getenv("DB_NAME", "consultarpp")
     DB_MAX_CONNECTIONS: int = int(os.getenv("DB_MAX_CONNECTIONS", "100"))
 

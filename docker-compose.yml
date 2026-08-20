@@ -14,7 +14,7 @@ services:
     - DB_HOST=10.4.3.208
     - DB_PORT=5432
     - DB_USER=${DB_USER:-consultarpp_user}
-    - DB_PASSWORD=${DB_PASSWORD:-***DB_PASSWORD_REDACTED***}
+    - DB_PASSWORD=${DB_PASSWORD:-changeme_local_dev_only}
     - DB_NAME=consultarpp_db
     - REDIS_URL=redis://casmarts-core-cache:6379/0
     - CELERY_BROKER=redis://casmarts-core-cache:6379/1
@@ -60,7 +60,7 @@ services:
     - DB_HOST=10.4.3.208
     - DB_PORT=5432
     - DB_USER=${DB_USER:-consultarpp_user}
-    - DB_PASSWORD=${DB_PASSWORD:-***DB_PASSWORD_REDACTED***}
+    - DB_PASSWORD=${DB_PASSWORD:-changeme_local_dev_only}
     - DB_NAME=consultarpp_db
     - REDIS_URL=redis://casmarts-core-cache:6379/0
     - CELERY_BROKER=redis://casmarts-core-cache:6379/1
@@ -100,7 +100,7 @@ services:
     - DB_HOST=10.4.3.208
     - DB_PORT=5432
     - DB_USER=${DB_USER:-consultarpp_user}
-    - DB_PASSWORD=${DB_PASSWORD:-***DB_PASSWORD_REDACTED***}
+    - DB_PASSWORD=${DB_PASSWORD:-changeme_local_dev_only}
     - DB_NAME=consultarpp_db
     - REDIS_URL=redis://casmarts-core-cache:6379/0
     - CELERY_BROKER=redis://casmarts-core-cache:6379/1
@@ -140,7 +140,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 2G
 networks:
   consulta-smart-network:
     driver: bridge

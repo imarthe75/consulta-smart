@@ -1,4 +1,6 @@
 import asyncio
+import os
+from app.core.config import settings
 from app.core.database import init_db, get_session
 from app.infrastructure.repositories.user_repository import PostgresUserRepository
 from app.domain.entities.user import User
@@ -8,12 +10,12 @@ async def main():
     await init_db()
     async for session in get_session():
         user_repo = PostgresUserRepository(session)
-        
-        admin_email = "arquiteturacasmarts@gmail.com"
-        admin_pwd = "***ADMIN_PASSWORD_REDACTED***"
-        
-        widget_email = "widget@casmarts.com"
-        widget_pwd = "***WIDGET_PASSWORD_REDACTED***"
+
+        admin_email = os.environ.get("ADMIN_EMAIL", "arquiteturacasmarts@gmail.com")
+        admin_pwd = os.environ["ADMIN_PASSWORD"]
+
+        widget_email = settings.WIDGET_EMAIL
+        widget_pwd = settings.WIDGET_PASSWORD
 
         # Admin
         existing = await user_repo.find_by_email(admin_email)
@@ -47,9 +49,9 @@ async def main():
             existing_widget.password_hash = get_password_hash(widget_pwd)
             await user_repo.update(existing_widget)
             print(f"Widget user {widget_email} actualizado.")
-            
+
         await session.commit()
-        break 
+        break
 
 if __name__ == "__main__":
     asyncio.run(main())

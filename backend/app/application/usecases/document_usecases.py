@@ -1,5 +1,6 @@
 # Use Case Implementations for Document Management
 
+import asyncio
 import os
 import tempfile
 from typing import Optional, List, Dict, Any
@@ -16,7 +17,7 @@ from app.infrastructure.external.llm_service import LLMService
 
 class ProcessDocumentUseCase(UseCase):
     """Process a document: parse, chunk, embed, and store"""
-    
+
     def __init__(
         self,
         document_repo: DocumentRepository,
@@ -29,7 +30,7 @@ class ProcessDocumentUseCase(UseCase):
         self.file_storage = file_storage
         self.llm_service = llm_service
         self.docling_service = DoclingService()
-    
+
     async def execute(self, document_id: str) -> dict:
         """Process document through full pipeline"""
         document = None
@@ -39,27 +40,30 @@ class ProcessDocumentUseCase(UseCase):
             document = await self.document_repo.find_by_id(document_id)
             if not document:
                 raise ValueError(f"Document {document_id} not found")
-            
+
             # 2. Mark as processing
             document.mark_processing_started()
             await self.document_repo.update(document)
             logger.info(f"[UseCase] Processing started for: {document_id} - {document.title}")
-            
+
             # 3. Download file from Storage (SeaweedFS)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{document.file_type}") as tmp:
-                temp_file_path = tmp.name
-            
+            def _make_temp_path(suffix: str) -> str:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    return tmp.name
+
+            temp_file_path = await asyncio.to_thread(_make_temp_path, f".{document.file_type}")
+
             await self.file_storage.download(document.seaweedfs_file_id, temp_file_path)
-            
+
             # 4. Parse document with Docling (o fallback a texto plano)
             text_content = await self.docling_service.extract_text(temp_file_path)
-            
+
             # 5. Extract text and clean
             clean_text = TextProcessingService.clean_text(text_content)
-            
+
             # 6. Create chunks
             chunks = TextProcessingService.extract_chunks(clean_text)
-            
+
             # 7. Generate embeddings (en lote) and store in Vector Store
             # NOTA (auditoría 2026-07-29): esta ruta (Celery `process_document_task`) estaba
             # rota en dos puntos que solo se manifiestan al ejecutarla: `llm_service` (uno de
@@ -88,12 +92,12 @@ class ProcessDocumentUseCase(UseCase):
                         "category": document.category
                     }
                 )
-            
+
             # 8. Update document status
             total_tokens = TextProcessingService.count_tokens(clean_text)
             document.mark_processing_completed(len(chunks), total_tokens)
             await self.document_repo.update(document)
-            
+
             logger.info(f"[UseCase] Processing completed for document: {document_id}")
             return {
                 "status": "completed",
@@ -101,7 +105,7 @@ class ProcessDocumentUseCase(UseCase):
                 "chunks": len(chunks),
                 "tokens": total_tokens
             }
-        
+
         except Exception as e:
             logger.error(f"[UseCase] Error processing document {document_id}: {e}")
             if document:
@@ -115,7 +119,7 @@ class ProcessDocumentUseCase(UseCase):
 
 class SearchDocumentsUseCase(UseCase):
     """Search documents using semantic search"""
-    
+
     def __init__(
         self,
         vector_store: VectorStore,
@@ -123,11 +127,11 @@ class SearchDocumentsUseCase(UseCase):
     ):
         self.vector_store = vector_store
         self.llm_service = llm_service
-    
+
     async def execute(
-        self, 
-        query: str, 
-        top_k: int = 5, 
+        self,
+        query: str,
+        top_k: int = 5,
         threshold: float = 0.75,
         filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
@@ -136,10 +140,10 @@ class SearchDocumentsUseCase(UseCase):
             # Filtro por defecto: Solo documentos activos
             if filters is None:
                 filters = {"is_active": True}
-            
+
             # 1. Create embedding for query
             query_embedding = await self.llm_service.create_embedding(query)
-            
+
             # 2. Perform search in vector store
             results = await self.vector_store.search(
                 query_embedding=query_embedding,
@@ -147,7 +151,7 @@ class SearchDocumentsUseCase(UseCase):
                 threshold=threshold,
                 filters=filters
             )
-            
+
             return results
         except Exception as e:
             logger.error(f"[UseCase] Error searching documents: {e}")

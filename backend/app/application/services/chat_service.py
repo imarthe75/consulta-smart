@@ -294,17 +294,19 @@ class ChatService:
             # Guardrails secundarios por archivo JSON si existe
             guardrail_path = os.path.join(os.path.dirname(__file__), "../../core/guardrails.json")
             if os.path.exists(guardrail_path):
-                with open(guardrail_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    for pattern in config.get("forbidden_patterns", []):
-                        if pattern in clean_query:
-                            return {
-                                "response": config.get("rejection_templates", {}).get("forbidden", rejection_text),
-                                "session_id": session_id,
-                                "provider": "Sistema Local (Guardrail Archivo)",
-                                "suggestions": [],
-                                "timestamp": datetime.utcnow().isoformat()
-                            }
+                def _load_guardrails(path: str) -> dict:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                config = await asyncio.to_thread(_load_guardrails, guardrail_path)
+                for pattern in config.get("forbidden_patterns", []):
+                    if pattern in clean_query:
+                        return {
+                            "response": config.get("rejection_templates", {}).get("forbidden", rejection_text),
+                            "session_id": session_id,
+                            "provider": "Sistema Local (Guardrail Archivo)",
+                            "suggestions": [],
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
 
             # 4. Heurística de Jurisdicción y Entidades (Inspirado en idp-smart)
             h_logic = {}

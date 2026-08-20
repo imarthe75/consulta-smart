@@ -1,5 +1,6 @@
 # Rutas de Administración de Documentos para ConsultaRPP
 
+import asyncio
 import os
 import tempfile
 from pathlib import Path
@@ -41,33 +42,37 @@ async def upload_document(
         # 1. Validaciones básicas
         if not file.filename:
             raise HTTPException(status_code=400, detail="Nombre de archivo requerido")
-        
+
         file_ext = file.filename.split('.')[-1].lower()
-        
+
         # 2. Guardar archivo temporalmente para subirlo a Storage
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp:
-            contents = await file.read()
-            tmp.write(contents)
-            temp_path = tmp.name
-        
+        contents = await file.read()
+
+        def _write_temp_file(data: bytes, suffix: str) -> str:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(data)
+                return tmp.name
+
+        temp_path = await asyncio.to_thread(_write_temp_file, contents, f".{file_ext}")
+
         # 3. Subir a SeaweedFS
         async with SeaweedFSFileStorage() as storage:
             seaweedfs_fid = await storage.upload(temp_path)
-        
+
         # 4. Crear registro en Base de Datos (PostgreSQL)
         repo = PostgresDocumentRepository(session)
-        
+
         # Lógica de versionado
         final_group_id = group_id
         final_version = 1
-        
+
         if final_group_id:
             latest_doc = await repo.find_latest_by_group_id(final_group_id)
             if latest_doc:
                 final_version = latest_doc.version + 1
                 # Si estamos subiendo una nueva versión, desactivamos las anteriores (opcional, depende de la política)
                 # await repo.deactivate_all_in_group(final_group_id)
-        
+
         effective_date = None
         if effective_date_str:
             try:
@@ -87,15 +92,15 @@ async def upload_document(
             is_active=True,
             effective_date=effective_date
         )
-        
+
         created_doc = await repo.create(document)
         await session.commit()
-        
+
         # 5. Encolar tarea de procesamiento asíncrono en Celery
         task = process_document_task.delay(str(created_doc.id))
-        
+
         logger.info(f"Documento '{title}' (ID: {created_doc.id}) subido y encolado. Task: {task.id}")
-        
+
         return APIResponse.success(
             data={
                 "document_id": str(created_doc.id),
@@ -104,7 +109,7 @@ async def upload_document(
                 "message": "Archivo recibido. Iniciando extracción de texto y generación de vectores."
             }
         )
-        
+
     except Exception as e:
         logger.error(f"Error en el flujo de carga de documento: {str(e)}")
         return APIResponse.create_error(f"Error al procesar la subida: {str(e)}")
@@ -122,14 +127,14 @@ async def get_document(
     """Obtener estado y detalles del documento con validación BOLA"""
     repo = PostgresDocumentRepository(session)
     document = await repo.find_by_id(document_id)
-    
+
     if not document:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
-    
+
     roles = current_user.get("roles", [])
     if str(document.user_id) != str(current_user.get("id")) and "admin" not in roles:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para acceder a este documento")
-    
+
     return APIResponse.success(data=document.to_dict())
 
 
@@ -147,7 +152,7 @@ async def list_documents(
         actual_page = page if page is not None and page > 0 else 1
         if skip is not None and limit > 0:
             actual_page = (skip // limit) + 1
-        
+
         # Obtener lista de roles del usuario
         roles = current_user.get("roles", [])
         if isinstance(roles, str):
@@ -170,7 +175,7 @@ async def list_documents(
                 documents, total = await repo.find_by_user_paginated(user_id, actual_page, limit)
             else:
                 documents, total = [], 0
-        
+
         return APIResponse.success(
             data={
                 "documents": [doc.to_dict() for doc in documents],
@@ -203,30 +208,30 @@ async def load_rpp_registry(
         base_path = Path(__file__).parent.parent.parent / "docs"
         registry_path = base_path / "rpp-registry"
         expert_path = base_path / "rpp_expert"
-        
+
         md_files = []
         if registry_path.exists():
             md_files.extend(list(registry_path.glob("**/*.md")))
         if expert_path.exists():
             md_files.extend(list(expert_path.glob("**/*.md")))
-            
+
         md_files = sorted(list(set(md_files)))
-        
+
         repo = PostgresDocumentRepository(session)
         vector_store = PostgresVectorStore(session)
         embedding_service = get_local_embedding_service()
-        
+
         logger.info(f"Encontrados {len(md_files)} documentos MD para cargar")
-        
+
         loaded_count = 0
         error_count = 0
-        
+
         for md_file in md_files:
             try:
                 # Leer contenido
                 content = md_file.read_text(encoding="utf-8")
                 relative_path = md_file.relative_to(base_path)
-                
+
                 # Determinar categoría
                 filename = md_file.name.lower()
                 if "costo" in filename or "arancel" in filename:
@@ -237,11 +242,11 @@ async def load_rpp_registry(
                     category = DocumentCategory.LEY
                 else:
                     category = DocumentCategory.REGLAMENTO
-                
+
                 # Crear documento con soporte de versiones
                 # Usar el nombre del archivo (sin extensión) como group_id para agrupar versiones futuras
                 doc_group_id = md_file.stem
-                
+
                 document = Document(
                     title=f"RPP Registry - {str(relative_path).replace('/', ' > ')}",
                     category=category,
@@ -253,11 +258,11 @@ async def load_rpp_registry(
                     version_label="2024-V1", # Versión inicial por defecto
                     is_active=True
                 )
-                
+
                 # Guardar en BD
                 created_doc = await repo.create(document)
                 logger.info(f"Documento creado: {relative_path} (ID: {created_doc.id})")
-                
+
                 # Generar embeddings - dividir en chunks
                 chunk_size = 1000
                 chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
@@ -289,17 +294,17 @@ async def load_rpp_registry(
                         logger.info(f"✅ Chunk {idx} guardado (ID: {chunk_id})")
                     except Exception as e:
                         logger.error(f"❌ Error guardando chunk {idx}: {e}")
-                
+
                 await session.commit()
                 loaded_count += 1
                 logger.info(f"✅ {relative_path} ({len(chunks)} chunks)")
-                
+
             except Exception as e:
                 error_count += 1
                 logger.error(f"❌ Error con {md_file}: {str(e)}")
                 await session.rollback()
                 continue
-        
+
         return APIResponse.success(
             data={
                 "loaded": loaded_count,
@@ -308,7 +313,7 @@ async def load_rpp_registry(
                 "message": f"Cargados {loaded_count} documentos del RPP-registry"
             }
         )
-    
+
     except Exception as e:
         logger.error(f"Error general en load_rpp_registry: {str(e)}")
         return APIResponse.create_error(f"Error al cargar RPP-registry: {str(e)}")

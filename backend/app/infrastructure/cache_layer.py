@@ -79,7 +79,7 @@ class HybridCacheLayer:
         la clave para que cada tenant tenga su propio espacio de caché aislado.
         """
         normalized = self._normalize_query(query)
-        hash_obj = hashlib.md5(normalized.encode())
+        hash_obj = hashlib.sha256(normalized.encode())
         return f"cache_consulta_rpp:{namespace}:{hash_obj.hexdigest()}"
 
     async def get_exact_match(self, query: str, namespace: str = "default") -> Optional[Dict[str, Any]]:

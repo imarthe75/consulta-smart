@@ -493,6 +493,8 @@ export default function ChatInterface({ isWidget = false }) {
                         {sessions.map((s) => (
                             <div
                                 key={s.id}
+                                role="button"
+                                tabIndex={0}
                                 className={clsx(
                                     'group flex items-center justify-between p-3 rounded-xl cursor-pointer text-sm transition-all',
                                     currentSessionId === s.id
@@ -500,6 +502,7 @@ export default function ChatInterface({ isWidget = false }) {
                                         : 'text-gray-600 hover:bg-gray-100/60'
                                 )}
                                 onClick={() => setCurrentSessionId(s.id)}
+                                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setCurrentSessionId(s.id)}
                             >
                                 <div className="flex items-center space-x-3 flex-1 min-w-0">
                                     <MessageSquare size={16} className={currentSessionId === s.id ? 'text-blue-600' : 'text-gray-400'} />
