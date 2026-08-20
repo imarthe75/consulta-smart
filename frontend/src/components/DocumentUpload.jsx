@@ -12,7 +12,7 @@ export default function DocumentUpload({ tenantId = 'all' }) {
     const [reindexStatus, setReindexStatus] = useState({})
     const fileInputRef = useRef(null)
 
-    const { documents, setDocuments, setLoading, setError, setUploadProgress, clearError } = useDocumentStore()
+    const { documents, setDocuments, loading, setLoading, setError, setUploadProgress, clearError, uploadProgress } = useDocumentStore()
 
     // Cargar perfiles de la BD para asociar el proyecto/tenant
     useEffect(() => {
@@ -123,65 +123,86 @@ export default function DocumentUpload({ tenantId = 'all' }) {
         }
     }
 
-    const [selectedFile, setSelectedFile]   = useState(null)
+    const [selectedFiles, setSelectedFiles] = useState([])
+    const [uploadBatchResult, setUploadBatchResult] = useState(null)
 
-    const handleFileSelected = (file) => {
-        if (!file) return
-        const ext = file.name.split('.').pop().toLowerCase()
-        const allowedExts = ['pdf', 'doc', 'docx', 'txt', 'md', 'png', 'jpg', 'jpeg']
+    // Tamaño total sumado del lote en Bytes (Límite: 500 MB = 500 * 1024 * 1024)
+    const MAX_BATCH_SIZE_BYTES = 500 * 1024 * 1024
+    const totalBatchSizeBytes = selectedFiles.reduce((acc, f) => acc + (f.size || 0), 0)
+    const isBatchSizeExceeded = totalBatchSizeBytes > MAX_BATCH_SIZE_BYTES
 
-        if (!allowedExts.includes(ext)) {
-            setError(`Formato .${ext} no permitido. Formatos aceptados: PDF, Word (DOC/DOCX), TXT, Markdown (MD) e Imágenes (PNG, JPG).`)
-            return
+    const handleFilesSelected = (filesList) => {
+        const filesArray = Array.from(filesList)
+        const validFiles = []
+        let hasError = false
+
+        for (const file of filesArray) {
+            const ext = file.name.split('.').pop().toLowerCase()
+            if (!['pdf', 'md', 'txt'].includes(ext)) {
+                setError(`Formato no soportado en "${file.name}". Solo se admiten PDF, MD y TXT.`)
+                hasError = true
+                break
+            }
+            if (file.size > 50 * 1024 * 1024) {
+                setError(`El archivo "${file.name}" supera los 50 MB.`)
+                hasError = true
+                break
+            }
+            validFiles.push(file)
         }
 
-        const maxSizeBytes = 50 * 1024 * 1024 // 50 MB
-        if (file.size > maxSizeBytes) {
-            setError(`El archivo supera el tamaño máximo permitido de 50 MB (Tamaño actual: ${(file.size / (1024 * 1024)).toFixed(1)} MB).`)
-            return
+        if (!hasError && validFiles.length > 0) {
+            clearError()
+            setUploadBatchResult(null)
+            setSelectedFiles(prev => {
+                // Evitar duplicados exactos en la seleccion local por nombre y tamaño
+                const existingKeys = new Set(prev.map(f => `${f.name}_${f.size}`))
+                const newUnique = validFiles.filter(f => !existingKeys.has(`${f.name}_${f.size}`))
+                return [...prev, ...newUnique]
+            })
         }
-
-        clearError()
-        setSelectedFile(file)
     }
 
     const handleDrop = (e) => {
         e.preventDefault()
         e.stopPropagation()
         setDragActive(false)
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-            handleFileSelected(e.dataTransfer.files[0])
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            handleFilesSelected(e.dataTransfer.files)
         }
     }
 
     const handleChange = (e) => {
-        if (e.target.files && e.target.files[0]) {
-            handleFileSelected(e.target.files[0])
+        if (e.target.files && e.target.files.length > 0) {
+            handleFilesSelected(e.target.files)
         }
     }
 
-    const uploadFile = async () => {
-        if (!selectedFile) return
+    const removeFile = (index) => {
+        setSelectedFiles(prev => prev.filter((_, i) => i !== index))
+    }
+
+    const uploadFiles = async () => {
+        if (selectedFiles.length === 0) return
+
+        if (!targetTenant || targetTenant === 'general' || targetTenant === 'all') {
+            setError('Debes seleccionar un Aplicativo / Tema (Tenant) específico en el filtro superior antes de realizar la carga.')
+            return
+        }
 
         setLoading(true)
         clearError()
+        setUploadBatchResult(null)
 
         try {
             const formData = new FormData()
-            formData.append('file', selectedFile)
-            formData.append('title', selectedFile.name)
-            // `category` es el campo que asocia el documento al tenant en el backend
-            // (admin.py::upload_chatbot_document) -- no confundir con el estado local
-            // `category` de este componente, que en realidad guarda el TIPO de
-            // documento (reglamentos/guias/etc), mapeado abajo a `doc_type`.
+            selectedFiles.forEach(file => {
+                formData.append('files', file)
+            })
             formData.append('category', targetTenant || 'general')
             formData.append('doc_type', category || 'reglamentos')
 
-            // Se llama directo al endpoint real de indexado RAG por tenant
-            // (admin/chatbot/documents/upload) -- NO documentsAPI.upload(), que apunta
-            // a /api/v1/documents/upload (documents.py), un pipeline de Celery aparte
-            // y ya documentado como roto (workers detenidos, ver CLAUDE.md).
-            await api.post('admin/chatbot/documents/upload', formData, {
+            const response = await api.post('admin/chatbot/documents/upload', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
                 onUploadProgress: (progressEvent) => {
                     const percentCompleted = Math.round(
@@ -191,15 +212,14 @@ export default function DocumentUpload({ tenantId = 'all' }) {
                 },
             })
 
-            // Recarga la lista real desde el backend en vez de fabricar un documento
-            // local falso -- ver comentario en fetchDocs() arriba.
             await fetchDocs()
 
-            setSelectedFile(null)
+            setUploadBatchResult(response.data)
+            setSelectedFiles([])
             if (fileInputRef.current) fileInputRef.current.value = ''
             setUploadProgress(0)
         } catch (err) {
-            setError('Error al cargar archivo: ' + err.message)
+            setError('Error al cargar archivos: ' + (err.response?.data?.detail || err.message))
         } finally {
             setLoading(false)
         }
@@ -254,28 +274,15 @@ export default function DocumentUpload({ tenantId = 'all' }) {
     return (
         <div className="space-y-6">
 
-            {/* Proyecto / Tenant Selector obligatorio */}
-            <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                    <Layers size={16} className="text-blue-500" />
-                    <span>Proyecto / Tenant de Destino (Requerido)</span>
-                </label>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Selecciona a qué aplicativo o tema del chatbot se vinculará este documento normativo:
-                </p>
-                <select
-                    value={targetTenant}
-                    onChange={(e) => setTargetTenant(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
-                >
-                    {profiles.map(p => (
-                        <option key={p.id} value={p.id}>
-                            {p.name} ({p.id})
-                        </option>
-                    ))}
-                    <option value="general">Chatbot General (general)</option>
-                </select>
-            </div>
+            {/* Mensaje Informativo de Tenant seleccionado */}
+            {(!targetTenant || targetTenant === 'general' || targetTenant === 'all') && (
+                <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs font-semibold flex items-center gap-2">
+                    <AlertCircle size={16} className="shrink-0 text-amber-600 dark:text-amber-400" />
+                    <span>
+                        Para cargar e indexar documentos debes seleccionar un Aplicativo / Tema (Tenant) específico en el filtro superior. No se permite carga en el tema genérico o global.
+                    </span>
+                </div>
+            )}
 
             {/* Upload Area & File Selection Form */}
             <div className="space-y-4">
@@ -288,7 +295,7 @@ export default function DocumentUpload({ tenantId = 'all' }) {
                     className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
                         dragActive
                             ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20'
-                            : selectedFile
+                            : selectedFiles.length > 0
                                 ? 'border-emerald-500 bg-emerald-50/20 dark:bg-emerald-950/20'
                                 : 'border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-850 hover:border-blue-500'
                     }`}
@@ -297,49 +304,90 @@ export default function DocumentUpload({ tenantId = 'all' }) {
                         ref={fileInputRef}
                         type="file"
                         onChange={handleChange}
-                        accept=".pdf,.doc,.docx,.txt,.md,.png,.jpg,.jpeg"
+                        multiple
+                        accept=".pdf,.txt,.md"
                         className="hidden"
                     />
 
-                    {selectedFile ? (
-                        <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-4 rounded-xl border border-emerald-300 dark:border-emerald-800 shadow-sm max-w-md mx-auto">
-                            <div className="flex items-center space-x-3 text-left">
-                                <FileText className="text-emerald-500 shrink-0" size={24} />
-                                <div className="min-w-0">
-                                    <p className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">{selectedFile.name}</p>
-                                    <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-                                        {(selectedFile.size / 1024).toFixed(1)} KB
+                    {selectedFiles.length > 0 ? (
+                        <div className="space-y-3" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <p className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                                        Archivos Seleccionados ({selectedFiles.length})
                                     </p>
+                                    <span className={`text-[11px] font-mono px-2 py-0.5 rounded-md font-bold ${
+                                        isBatchSizeExceeded
+                                            ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300 dark:border-rose-800'
+                                            : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                                    }`}>
+                                        Peso Total: {(totalBatchSizeBytes / (1024 * 1024)).toFixed(1)} MB / 500 MB
+                                    </span>
                                 </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedFiles([])}
+                                    className="text-xs text-rose-500 hover:underline font-semibold"
+                                >
+                                    Limpiar todos
+                                </button>
+                            </div>
+
+                            {isBatchSizeExceeded && (
+                                <div className="p-3 bg-rose-50 dark:bg-rose-950/50 border border-rose-300 dark:border-rose-800 rounded-xl text-rose-800 dark:text-rose-300 text-xs font-semibold flex items-center gap-2">
+                                    <AlertCircle size={16} className="shrink-0 text-rose-600 dark:text-rose-400" />
+                                    <span>
+                                        ¡El lote excede el tamaño máximo permitido! El peso total es de <strong>{(totalBatchSizeBytes / (1024 * 1024)).toFixed(1)} MB</strong> (Límite: 500 MB). Remueve algunos archivos para habilitar el botón de carga.
+                                    </span>
+                                </div>
+                            )}
+
+                            <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                                {selectedFiles.map((file, idx) => (
+                                    <div key={`${file.name}_${idx}`} className="flex items-center justify-between bg-white dark:bg-slate-900 p-3 rounded-xl border border-emerald-300 dark:border-emerald-800 shadow-sm">
+                                        <div className="flex items-center space-x-3 text-left min-w-0">
+                                            <FileText className="text-emerald-500 shrink-0" size={20} />
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">{file.name}</p>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                                                    {(file.size / 1024).toFixed(1)} KB
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => removeFile(idx)}
+                                            className="p-1 text-slate-400 hover:text-rose-500 transition"
+                                            title="Quitar archivo"
+                                        >
+                                            <X size={16} />
+                                        </button>
+                                    </div>
+                                ))}
                             </div>
                             <button
                                 type="button"
-                                onClick={(e) => {
-                                    e.stopPropagation()
-                                    setSelectedFile(null)
-                                    if (fileInputRef.current) fileInputRef.current.value = ''
-                                }}
-                                className="p-1 text-slate-400 hover:text-rose-500 transition"
-                                title="Quitar archivo"
+                                onClick={() => fileInputRef.current?.click()}
+                                className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline"
                             >
-                                <X size={18} />
+                                + Agregar más archivos
                             </button>
                         </div>
                     ) : (
                         <>
                             <Upload size={40} className="mx-auto mb-3 text-blue-500" />
                             <p className="text-base font-bold text-slate-800 dark:text-slate-200 mb-1">
-                                Arrastra un archivo aquí o haz clic para seleccionar
+                                Arrastra tus archivos aquí o haz clic para seleccionar (Múltiples permitidos)
                             </p>
                             <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
-                                Se asociará al aplicativo: <strong className="text-blue-600 dark:text-blue-400">{profiles.find(p => p.id === targetTenant)?.name || targetTenant}</strong>
+                                Se asociarán al aplicativo: <strong className="text-blue-600 dark:text-blue-400">{profiles.find(p => p.id === targetTenant)?.name || targetTenant}</strong>
                             </p>
                             <div className="inline-flex flex-wrap items-center justify-center gap-2 mb-4">
-                                <span className="px-2.5 py-0.5 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-md text-[11px] font-mono">
-                                    PDF, DOC, DOCX, TXT, MD, PNG, JPG
+                                <span className="px-2.5 py-0.5 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-md text-[11px] font-mono font-semibold">
+                                    Formatos: PDF, TXT, MD
                                 </span>
-                                <span className="px-2.5 py-0.5 bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 rounded-md text-[11px] font-mono border border-amber-200 dark:border-amber-900">
-                                    Máx. 50 MB
+                                <span className="px-2.5 py-0.5 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 rounded-md text-[11px] font-mono border border-emerald-200 dark:border-emerald-900 font-bold">
+                                    Límite Máx: 500 MB por lote (50 MB c/u)
                                 </span>
                             </div>
                             <button
@@ -347,11 +395,96 @@ export default function DocumentUpload({ tenantId = 'all' }) {
                                 onClick={() => fileInputRef.current?.click()}
                                 className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-xs hover:bg-blue-700 transition shadow-sm"
                             >
-                                Seleccionar Archivo
+                                Seleccionar Archivos
                             </button>
                         </>
                     )}
                 </div>
+
+                {uploadBatchResult && (
+                    <div className="p-4 bg-slate-50 dark:bg-slate-800/90 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3 shadow-sm">
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                                <CheckCircle2 size={18} className="text-emerald-500 shrink-0" />
+                                <div>
+                                    <p className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                                        Resumen de Ingesta al RAG ({uploadBatchResult.total_files || uploadBatchResult.results?.length} archivos en total)
+                                    </p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                                        {uploadBatchResult.message}
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setUploadBatchResult(null)}
+                                className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg transition shrink-0"
+                            >
+                                Limpiar Resumen
+                            </button>
+                        </div>
+
+                        {/* Chips de desglose de métricas */}
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <span className="px-2.5 py-1 bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 font-bold rounded-lg text-xs border border-emerald-300 dark:border-emerald-800">
+                                Total Cargados: {uploadBatchResult.processed_count ?? 0}
+                            </span>
+                            <span className="px-2.5 py-1 bg-blue-100 dark:bg-blue-950/50 text-blue-800 dark:text-blue-300 font-medium rounded-lg text-xs border border-blue-300 dark:border-blue-800">
+                                Nuevos: {uploadBatchResult.new_files_count ?? 0}
+                            </span>
+                            <span className="px-2.5 py-1 bg-indigo-100 dark:bg-indigo-950/50 text-indigo-800 dark:text-indigo-300 font-medium rounded-lg text-xs border border-indigo-300 dark:border-indigo-800">
+                                Actualizados / Versión: {uploadBatchResult.duplicate_renamed_count ?? 0}
+                            </span>
+                            <span className="px-2.5 py-1 bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 font-bold rounded-lg text-xs border border-amber-300 dark:border-amber-800">
+                                Omitidos (Idénticos): {uploadBatchResult.duplicate_omitted_count ?? 0}
+                            </span>
+                            {uploadBatchResult.failed_count > 0 && (
+                                <span className="px-2.5 py-1 bg-rose-100 dark:bg-rose-950/50 text-rose-800 dark:text-rose-300 font-bold rounded-lg text-xs border border-rose-300 dark:border-rose-800">
+                                    Fallidos: {uploadBatchResult.failed_count - (uploadBatchResult.duplicate_omitted_count || 0)}
+                                </span>
+                            )}
+                        </div>
+
+                        {uploadBatchResult.results && (
+                            <div className="space-y-1 text-xs pt-2 border-t border-slate-200 dark:border-slate-700 max-h-40 overflow-y-auto pr-1">
+                                {uploadBatchResult.results.map((res, i) => (
+                                    <div key={i} className="flex items-center justify-between py-1.5 border-b border-slate-100 dark:border-slate-800 last:border-0">
+                                        <span className="font-mono text-slate-700 dark:text-slate-300 truncate max-w-xs">{res.filename}</span>
+                                        <span className={`font-semibold px-2 py-0.5 rounded text-[10px] ${
+                                            res.status === 'success' ? 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300' :
+                                            res.status === 'duplicate_renamed' ? 'bg-indigo-100 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300' :
+                                            res.status === 'duplicate_omitted' || res.status === 'duplicate' ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300' :
+                                            'bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300'
+                                        }`}>
+                                            {res.status === 'success' ? `Nuevo Indexado (${res.document?.chunk_count} chunks)` :
+                                             res.status === 'duplicate_renamed' ? `Cargado como ${res.document?.title}` :
+                                             res.status === 'duplicate_omitted' || res.status === 'duplicate' ? 'Omitido (Idéntico)' : 'Error'}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Progress Bar during Upload */}
+                {loading && (
+                    <div className="p-4 bg-blue-50 dark:bg-blue-950/30 rounded-xl border border-blue-200 dark:border-blue-800 space-y-2">
+                        <div className="flex items-center justify-between text-xs font-bold text-blue-700 dark:text-blue-300">
+                            <span className="flex items-center gap-2">
+                                <RefreshCw size={14} className="animate-spin text-blue-500" />
+                                <span>Procesando e Indexando Documentos en el RAG...</span>
+                            </span>
+                            <span>{uploadProgress > 0 ? `${uploadProgress}%` : 'Extrayendo texto y generando vectores...'}</span>
+                        </div>
+                        <div className="w-full h-2 bg-blue-200 dark:bg-blue-900 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                                style={{ width: `${uploadProgress > 0 ? uploadProgress : 100}%` }}
+                            />
+                        </div>
+                    </div>
+                )}
 
                 {/* Categoría y Botón de Acción de Carga */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 dark:bg-slate-850 p-4 rounded-xl border border-slate-200 dark:border-slate-800 items-end">
@@ -361,8 +494,9 @@ export default function DocumentUpload({ tenantId = 'all' }) {
                         </label>
                         <select
                             value={category}
+                            disabled={loading}
                             onChange={(e) => setCategory(e.target.value)}
-                            className="w-full px-4 py-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer font-medium text-xs"
+                            className="w-full px-4 py-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer font-medium text-xs disabled:opacity-50"
                         >
                             {categories.filter(c => c.value !== 'all').map(cat => (
                                 <option key={cat.value} value={cat.value}>
@@ -374,12 +508,30 @@ export default function DocumentUpload({ tenantId = 'all' }) {
 
                     <button
                         type="button"
-                        onClick={uploadFile}
-                        disabled={!selectedFile}
-                        className="w-full py-2.5 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition flex items-center justify-center space-x-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={uploadFiles}
+                        disabled={selectedFiles.length === 0 || loading || !targetTenant || targetTenant === 'general' || targetTenant === 'all' || isBatchSizeExceeded}
+                        className={`w-full py-2.5 px-5 font-bold rounded-xl text-xs transition flex items-center justify-center space-x-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                            isBatchSizeExceeded
+                                ? 'bg-rose-600 text-white'
+                                : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        }`}
                     >
-                        <Upload size={16} />
-                        <span>Cargar e Indexar en el RAG</span>
+                        {loading ? (
+                            <>
+                                <RefreshCw size={16} className="animate-spin text-white" />
+                                <span>Cargando e Indexando en RAG...</span>
+                            </>
+                        ) : isBatchSizeExceeded ? (
+                            <>
+                                <AlertCircle size={16} />
+                                <span>Tamaño Excedido (&gt;500 MB)</span>
+                            </>
+                        ) : (
+                            <>
+                                <Upload size={16} />
+                                <span>Cargar e Indexar en el RAG</span>
+                            </>
+                        )}
                     </button>
                 </div>
             </div>

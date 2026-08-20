@@ -832,135 +832,203 @@ async def get_chatbot_documents(
         for doc in docs
     ]
 
-@router.post("/chatbot/documents/upload", dependencies=[Depends(rate_limit(5, 60))])
+@router.post("/chatbot/documents/upload", dependencies=[Depends(rate_limit(10, 60))])
 async def upload_chatbot_document(
-    file: UploadFile = File(...),
+    files: Optional[List[UploadFile]] = File(None),
+    file: Optional[UploadFile] = File(None),
     title: Optional[str] = Form(None),
     category: Optional[str] = Form("general"),
     doc_type: Optional[str] = Form("reglamentos"),
     db: AsyncSession = Depends(get_session),
     current_user: dict = Depends(require_admin)
 ):
-    if not file or not file.filename:
-        raise HTTPException(status_code=400, detail="Archivo es obligatorio")
+    upload_files: List[UploadFile] = []
+    if files:
+        upload_files.extend(files)
+    if file and file not in upload_files:
+        upload_files.append(file)
 
-    file_ext = file.filename.split('.')[-1].lower()
-    if file_ext not in ["pdf", "md", "txt"]:
-        raise HTTPException(status_code=400, detail="Formato no soportado. Permitido solo PDF, MD o TXT")
+    upload_files = [f for f in upload_files if f and f.filename]
 
-    try:
-        contents = await file.read()
-        # Hash del contenido crudo del archivo (no del texto extraído) -- detecta re-subidas
-        # exactas del mismo binario antes de gastar tiempo parseando/chunkeando/embebiendo de
-        # nuevo. Alcance por tenant (`category`): el mismo PDF regulatorio subido a propósito
-        # a dos temas distintos es un caso de uso válido, no un duplicado accidental.
-        content_hash = hashlib.sha256(contents).hexdigest()
-        target_category = category or "general"
-        existing = await db.execute(
-            select(Document).where(
-                Document.content_hash == content_hash,
-                Document.category == target_category,
-                Document.is_active == True,
-            )
-        )
-        duplicate_doc = existing.scalars().first()
-        if duplicate_doc:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Este documento ya fue subido antes para este tema (\"{duplicate_doc.title}\", {duplicate_doc.created_at.strftime('%Y-%m-%d')}). Elimínalo primero si quieres reemplazarlo."
-            )
+    if not upload_files:
+        raise HTTPException(status_code=400, detail="Al menos un archivo es obligatorio")
 
-        extracted_text = ""
+    results = []
+    processed_count = 0
+    failed_count = 0
+    duplicate_omitted_count = 0
+    duplicate_renamed_count = 0
+    new_files_count = 0
+    target_category = category or "general"
+    embed_service = get_local_embedding_service()
 
-        if file_ext == "pdf":
-            try:
-                doc_pdf = fitz.open(stream=contents, filetype="pdf")
-                pages_text = [page.get_text() for page in doc_pdf]
-                extracted_text = "\n".join(pages_text)
-            except Exception as pdf_err:
-                logger.error(f"Error parseando PDF: {pdf_err}")
-                raise HTTPException(status_code=400, detail=f"No se pudo extraer texto del PDF: {pdf_err}")
-        else:
-            extracted_text = contents.decode("utf-8", errors="ignore")
+    for idx, current_file in enumerate(upload_files):
+        file_ext = current_file.filename.split('.')[-1].lower() if '.' in current_file.filename else ''
+        if file_ext not in ["pdf", "md", "txt"]:
+            results.append({
+                "filename": current_file.filename,
+                "status": "error",
+                "detail": "Formato no soportado. Permitido solo PDF, MD o TXT"
+            })
+            failed_count += 1
+            continue
 
-        extracted_text = extracted_text.strip()
-        if not extracted_text:
-            raise HTTPException(status_code=400, detail="El documento no contiene texto legible")
-
-        doc_title = title if (title and title.strip()) else file.filename
-
-        new_doc = Document(
-            title=doc_title,
-            category=category or "general",
-            user_id=current_user["id"],
-            file_type=file_ext,
-            status="indexed",
-            is_active=True,
-            token_count=len(extracted_text.split()),
-            content_hash=content_hash,
-            doc_metadata={
-                "original_filename": file.filename,
-                "doc_type": doc_type or "reglamentos"
-            }
-        )
-        db.add(new_doc)
-        await db.flush()
-
-        chunk_size = 800
-        overlap = 100
-        chunks = []
-        for i in range(0, len(extracted_text), chunk_size - overlap):
-            chunk_str = extracted_text[i:i + chunk_size].strip()
-            if chunk_str:
-                chunks.append(chunk_str)
-
-        # Generación de embeddings EN LOTE (auditoría 2026-07-29, PERF-INGEST-001): antes se
-        # invocaba embed_service.embed(chunk_text) uno por uno dentro del for, es decir N
-        # llamadas secuenciales al modelo local (cada una con su propio round-trip a un hilo
-        # separado) para un documento con N chunks. embed_batch() ya existía en
-        # LocalEmbeddingService pero nunca se usaba aquí — SentenceTransformers vectoriza el
-        # batch completo en una sola pasada, mucho más rápido para documentos grandes.
-        embed_service = get_local_embedding_service()
         try:
-            embeddings = await embed_service.embed_batch(chunks)
-        except Exception as embed_err:
-            logger.warning(f"Error generando embeddings en lote ({len(chunks)} chunks): {embed_err}")
-            embeddings = [None] * len(chunks)
+            contents = await current_file.read()
+            content_hash = hashlib.sha256(contents).hexdigest()
 
-        chunk_models = []
-        for idx, (chunk_text, embedding) in enumerate(zip(chunks, embeddings)):
-            chunk_model = DocumentChunk(
-                document_id=new_doc.id,
-                chunk_number=idx,
-                text=chunk_text,
-                token_count=len(chunk_text.split()),
-                embedding=embedding,
-                doc_metadata={"filename": file.filename, "category": category}
+            existing = await db.execute(
+                select(Document).where(
+                    Document.content_hash == content_hash,
+                    Document.category == target_category,
+                    Document.is_active == True,
+                )
             )
-            db.add(chunk_model)
-            chunk_models.append(chunk_model)
+            duplicate_doc = existing.scalars().first()
+            if duplicate_doc:
+                results.append({
+                    "filename": current_file.filename,
+                    "status": "duplicate_omitted",
+                    "detail": f"Este documento ya fue subido antes para este tema (\"{duplicate_doc.title}\", {duplicate_doc.created_at.strftime('%Y-%m-%d')})."
+                })
+                duplicate_omitted_count += 1
+                failed_count += 1
+                continue
 
-        new_doc.chunk_count = len(chunk_models)
-        await db.commit()
-        await db.refresh(new_doc)
+            extracted_text = ""
+            if file_ext == "pdf":
+                try:
+                    doc_pdf = fitz.open(stream=contents, filetype="pdf")
+                    pages_text = [page.get_text() for page in doc_pdf]
+                    extracted_text = "\n".join(pages_text)
+                except Exception as pdf_err:
+                    logger.error(f"Error parseando PDF ({current_file.filename}): {pdf_err}")
+                    results.append({
+                        "filename": current_file.filename,
+                        "status": "error",
+                        "detail": f"No se pudo extraer texto del PDF: {pdf_err}"
+                    })
+                    failed_count += 1
+                    continue
+            else:
+                extracted_text = contents.decode("utf-8", errors="ignore")
 
-        return {
-            "status": "success",
-            "message": f"Documento '{new_doc.title}' subido y procesado con éxito ({new_doc.chunk_count} fragmentos vectorizados)",
-            "document": {
-                "id": new_doc.id,
-                "title": new_doc.title,
-                "category": new_doc.category,
-                "chunk_count": new_doc.chunk_count,
-                "status": new_doc.status
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error en upload_chatbot_document: {e}")
-        await db.rollback()
-        raise HTTPException(status_code=500, detail="No se pudo procesar el documento.")
+            extracted_text = extracted_text.strip()
+            if not extracted_text:
+                results.append({
+                    "filename": current_file.filename,
+                    "status": "error",
+                    "detail": "El documento no contiene texto legible"
+                })
+                failed_count += 1
+                continue
+
+            if len(upload_files) > 1 or not (title and title.strip()):
+                base_title = current_file.filename
+            else:
+                base_title = title.strip()
+
+            same_title_res = await db.execute(
+                select(Document).where(
+                    Document.title == base_title,
+                    Document.category == target_category,
+                    Document.is_active == True
+                )
+            )
+            is_renamed = False
+            if same_title_res.scalars().first():
+                from datetime import datetime
+                time_suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
+                doc_title = f"{base_title} ({time_suffix})"
+                is_renamed = True
+                duplicate_renamed_count += 1
+            else:
+                doc_title = base_title
+                new_files_count += 1
+
+            new_doc = Document(
+                title=doc_title,
+                category=target_category,
+                user_id=current_user["id"],
+                file_type=file_ext,
+                status="indexed",
+                is_active=True,
+                token_count=len(extracted_text.split()),
+                content_hash=content_hash,
+                doc_metadata={
+                    "original_filename": current_file.filename,
+                    "doc_type": doc_type or "reglamentos"
+                }
+            )
+            db.add(new_doc)
+            await db.flush()
+
+            chunk_size = 800
+            overlap = 100
+            chunks = []
+            for i in range(0, len(extracted_text), chunk_size - overlap):
+                chunk_str = extracted_text[i:i + chunk_size].strip()
+                if chunk_str:
+                    chunks.append(chunk_str)
+
+            try:
+                embeddings = await embed_service.embed_batch(chunks)
+            except Exception as embed_err:
+                logger.warning(f"Error generando embeddings en lote ({len(chunks)} chunks) para {current_file.filename}: {embed_err}")
+                embeddings = [None] * len(chunks)
+
+            chunk_models = []
+            for c_idx, (chunk_text, embedding) in enumerate(zip(chunks, embeddings)):
+                chunk_model = DocumentChunk(
+                    document_id=new_doc.id,
+                    chunk_number=c_idx,
+                    text=chunk_text,
+                    token_count=len(chunk_text.split()),
+                    embedding=embedding,
+                    doc_metadata={"filename": current_file.filename, "category": target_category}
+                )
+                db.add(chunk_model)
+                chunk_models.append(chunk_model)
+
+            new_doc.chunk_count = len(chunk_models)
+            await db.commit()
+            await db.refresh(new_doc)
+
+            processed_count += 1
+            results.append({
+                "filename": current_file.filename,
+                "status": "duplicate_renamed" if is_renamed else "success",
+                "document": {
+                    "id": new_doc.id,
+                    "title": new_doc.title,
+                    "category": new_doc.category,
+                    "chunk_count": new_doc.chunk_count,
+                    "status": new_doc.status
+                }
+            })
+
+        except Exception as e:
+            logger.error(f"Error procesando archivo '{current_file.filename}': {e}")
+            await db.rollback()
+            results.append({
+                "filename": current_file.filename,
+                "status": "error",
+                "detail": f"Error inesperado al procesar: {str(e)}"
+            })
+            failed_count += 1
+
+    overall_status = "success" if processed_count > 0 else "error"
+    return {
+        "status": overall_status,
+        "message": f"Procesamiento finalizado. {processed_count} cargado(s) [{new_files_count} nuevo(s), {duplicate_renamed_count} actualizado(s)], {duplicate_omitted_count} omitido(s) por coincidencia exacta.",
+        "total_files": len(upload_files),
+        "processed_count": processed_count,
+        "new_files_count": new_files_count,
+        "duplicate_renamed_count": duplicate_renamed_count,
+        "duplicate_omitted_count": duplicate_omitted_count,
+        "failed_count": failed_count,
+        "results": results
+    }
 
 
 @router.post("/chatbot/documents/{document_id}/reindex")
