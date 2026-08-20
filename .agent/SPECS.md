@@ -262,3 +262,88 @@ Este archivo actúa como la capa persistente de especificaciones de OpenSpec. To
   - Enviar el primer mensaje de una sesión nueva nunca invoca `clearMessages()`/`setMessages()` como resultado de la carga de historial, ni llama a `chatAPI.getSession()` en absoluto para esa sesión recién creada.
 - **Casos de Borde:**
   - Incidente real que motivó este contrato: el usuario reportó "cada que hago una pregunta sigue desapareciendo del chat" — confirmado con logs reales del backend (`GET /chat/sessions/{id}` 700ms después de `POST /chat/sessions`, antes de que `POST /chat/query` completara) que cada pregunta probada creaba una sesión nueva y disparaba la carrera. Es un bug DISTINTO e independiente de `[CS-016]` (cierre obsoleto de React) y del Blindaje duplicando tiempo de espera (`[CS-018]`) — los tres coexistían con síntomas distintos. Prueba de regresión en `ChatInterfaceNewSessionSend.test.jsx`, verificada como capaz de detectar el bug (falla real al revertir el fix temporalmente, pasa al restaurarlo). Ver `STATE.md` sesión 2026-08-14 (continuación 5).
+
+### [CS-021] Dominio público dedicado por tenant (multi-dominio, no solo multi-tema)
+- **Estado:** `IMPLEMENTADO` (2026-08-19/20)
+- **Requisitos:**
+  - Un dominio público nuevo (ej. `chat.teca.ca-smarts.com`) debe poder servir el mismo build de frontend que `chat.casmart.internal`, forzando un `profile_id` fijo (sin selector visible) y autenticando contra un Authentik potencialmente distinto — todo resuelto en runtime por `window.location.hostname`, sin variables de build por dominio.
+  - `frontend/src/config/domainLock.js` centraliza dos mapas: `DOMAIN_LOCKED_PROFILE` (hostname → profile_id fijo) y `DOMAIN_AUTHORITY`/`resolveAuthority()` (hostname → issuer OIDC), con default seguro (`auth.casmart.internal`, sin bloqueo de tema) para cualquier hostname no listado.
+  - El login por dominio bloqueado NUNCA debe respetar `profile_id`/`tenant` de query string — el hostname manda siempre.
+- **Restricciones:**
+  - El backend NO valida el `profile_id` contra el dominio de origen de la petición — el bloqueo es puramente de UI/UX en `ChatInterface.jsx` (mismo nivel de garantía que el resto de interruptores `config_metadata`, ver `[CS-024]`).
+  - Requiere, fuera de este repo: alta en el nginx de `.26` (vhost del dominio nuevo, cert propio), Pi-hole si el nombre debe resolver en la LAN interna, y alta explícita del origen en la lista blanca de CORS del gateway de Authentik en `.208` (`subdomains.conf`, bloque `auth.casmart.internal`) — sin eso el login falla en el navegador aunque el código de este repo esté perfecto.
+- **Criterios de Aceptación:**
+  - `resolveAuthority('chat.teca.ca-smarts.com')` devuelve el issuer de `auth.teca.ca-smarts.com`; cualquier otro hostname cae al default.
+  - Con el hostname bloqueado, el chat ignora `?profile_id=` de la URL y oculta el selector "Asistente Activo".
+- **Casos de Borde:**
+  - Ver `docs/BITACORA_ANALISIS_CAUSAL.md` para la cadena completa de incidentes reales encontrados al desplegar el primer dominio nuevo (CORS, Signing Key vaciado en Authentik, certificado autofirmado bloqueando el intercambio de token en segundo plano).
+
+### [CS-022] Aislamiento de resultados RAG por `category` en TODAS las ramas de búsqueda
+- **Estado:** `IMPLEMENTADO` (2026-08-19)
+- **Requisitos:**
+  - `KnowledgeBase.search_in_knowledge_async` (búsqueda híbrida: vectorial + texto) debe aplicar `filters["category"]` como filtro SQL duro en las 3 consultas crudas involucradas: la vectorial (pgvector `<=>`), la de texto (`to_tsvector`/`to_tsquery`) y su fallback `ILIKE`.
+  - Ningún resultado de una categoría/tenant distinta al solicitado debe poder aparecer en `sources`/contexto RAG de otro tenant, sin importar por cuál de las 3 ramas se recuperó.
+- **Restricciones:**
+  - Ninguna.
+- **Criterios de Aceptación:**
+  - Con `filters={"category": "teca"}`, una consulta genérica ("requisitos y procedimiento para este trámite") solo devuelve chunks con `category='teca'`.
+  - La MISMA consulta sin filtro de categoría sí devuelve otras categorías (`starter`, `rpp`, `procedimiento`, `general`) — confirma que la fuga era real antes del fix, no solo teórica.
+- **Casos de Borde:**
+  - Bug encontrado al desplegar el primer tenant nuevo (`teca`): documentos de otros temas (ej. `DIRECTORIO_NOTARIOS_FULL_2026`, de RPP/IRCEP) aparecían citados como "Fuentes Oficiales" en el chat de `teca`. Causa raíz: la rama vectorial nunca había tenido filtro de `category` desde su implementación original — no es una regresión de este cambio, es el estado real hasta este fix. Verificado con `scripts/verify_rag_category_isolation.py` contra la BD real (antes/después, con y sin filtro).
+
+### [CS-023] Comportamiento conversacional configurable por tema (aclaración, sugerencias, estilo, saludo)
+- **Estado:** `IMPLEMENTADO` (2026-08-20)
+- **Requisitos:**
+  - `chat_service.py` debe poder instruir al LLM, vía sufijos de `system_prompt` concatenados DESPUÉS de resolver el prompt base (custom o fallback, nunca reemplazándolo), a: (a) pedir aclaración cuando una consulta es ambigua-pero-válida en dominio, priorizando SIEMPRE responder con contenido ya recuperado del RAG sobre preguntar si el RAG ya tiene la respuesta; (b) anexar 2-4 sugerencias de seguimiento en un marcador `SUGERENCIAS_JSON:` al final de la respuesta, extraído por regex+`json.loads` con degradación a `[]` si el LLM no siguió el formato, y SIEMPRE recortado del texto visible al usuario; (c) aplicar un estilo de respuesta (`concise`/`detailed`) opcional.
+  - Cada uno de los 4 comportamientos (aclaración, sugerencias, estilo, saludo-vía-LLM) debe ser activable/desactivable de forma independiente por tema vía `config_metadata` (`enable_clarifying_questions`, `enable_suggestions`, `response_style`, `greeting_via_llm`), todos con default que preserva el comportamiento previo a este contrato (`True`/`True`/`"default"`/`False`).
+  - El rewriter de búsqueda RAG (`chat_service.py`, sección "Traducción Semántica") debe anteponer el contexto de los últimos 2 mensajes de `conversation_history` a la query de búsqueda antes de decidir si reescribe y antes de construir `search_query` — para que una respuesta corta de seguimiento (ej. "Puebla", tras una pregunta de aclaración del propio asistente) no pierda el tema original de la conversación en la recuperación RAG.
+- **Restricciones:**
+  - Los sufijos de comportamiento deben permanecer 100% agnósticos de dominio/tenant (misma restricción de `[CS-002]`) — nunca texto específico de un perfil particular.
+  - Este mecanismo es aditivo sobre el `system_prompt` propio de cada tema: si el prompt propio de un tema ya induce una conducta similar por su cuenta (ej. un bot de mesa de ayuda que ya pide datos faltantes), desactivar `enable_clarifying_questions` apaga SOLO la instrucción agregada por este contrato, no la tendencia del prompt base del tema.
+- **Criterios de Aceptación:**
+  - Verificado en vivo contra los 11 perfiles reales de producción: aclaración funciona (perfiles que reciben una consulta ambigua piden el dato faltante, con prioridad de RAG-real-sobre-preguntar confirmada para `general`/`rpp`), sugerencias no vacías y sin fuga del marcador en 10/11 perfiles (1 timeout de infraestructura LLM, no del feature), rechazo de temas fuera de dominio sigue firme en 9/11 (2 excepciones son perfiles de prueba `probando`/`prueba-chat`, eliminados de la BD el mismo día).
+  - `response_style=concise` vs `detailed` sobre la misma pregunta: 719 vs 2040 caracteres (verificación real, no estimada).
+  - `greeting_via_llm=True` cambia `provider` de `"Sistema Local (Saludo)"` a un proveedor LLM real, con respuesta generada en vivo.
+- **Casos de Borde:**
+  - Un cache-hit (`[CS-025]`) para una pregunta de primer turno nunca dispara el rewriter con contexto (no aplica, no hay LLM call en un hit).
+
+### [CS-024] Interruptores de visibilidad y disponibilidad por tema (`config_metadata`)
+- **Estado:** `IMPLEMENTADO` (2026-08-19/20)
+- **Requisitos:**
+  - `show_sources`, `show_provider_debug`, `enable_feedback_buttons`, `enable_widget_embed`: cuatro flags booleanos en `ChatbotProfile.config_metadata` (columna JSON ya existente, sin migración), todos `True` por defecto (preserva el comportamiento anterior a este contrato en cualquier tema que no los configure explícitamente).
+  - `show_provider_debug=False` debe omitir el sufijo `"\n\n---\n*LLM: ...*"` que `chat.py` concatena al texto de la respuesta ANTES de guardarla en BD (no es un post-proceso de despliegue, es al momento de generar la respuesta).
+  - `show_sources=False` y `enable_feedback_buttons=False` son gates puramente de renderizado en `ChatInterface.jsx` (`profileConfig.show_sources`/`profileConfig.enable_feedback_buttons`, poblados desde `GET /chat/profiles/{id}`) — el backend sigue calculando/devolviendo esos datos siempre.
+  - `enable_widget_embed=False` debe bloquearse en DOS capas: (a) `WidgetPage.jsx` verifica el flag ANTES de invocar `guestLogin()` y muestra un mensaje de bloqueo en vez de montar el chat (falla abierto si la verificación misma da error de red); (b) `POST /chat/query` rechaza con `403` cualquier mensaje cuando `current_user.is_widget=True` (JWT del login de invitado, ver `auth_utils.py::get_current_user`) Y el perfil objetivo tiene `enable_widget_embed=False` -- un usuario autenticado normal (no invitado) nunca se ve afectado por este flag.
+- **Restricciones:**
+  - El refuerzo de backend de `enable_widget_embed` es la ÚNICA de estas 4 flags con una barrera real de API (no solo de UI) — las otras 3 dependen de que el cliente honre lo que el backend le indica/genera, mismo nivel de garantía que el resto de esta app.
+- **Criterios de Aceptación:**
+  - `curl` real con JWT de invitado contra `POST /chat/query` en un perfil con `enable_widget_embed=False`: `403`. Mismo perfil sin el flag (o en `True`): `200`.
+  - Panel admin (`AdminPage.jsx`) expone las 4 flags como checkboxes/select junto al resto de Guardrails, ya incluidas en el payload de guardado existente (`configToSave = {...config, ...}`, sin cambios adicionales de fontanería).
+- **Casos de Borde:**
+  - Un usuario autenticado normal (admin/staff) que use un tema con `enable_widget_embed=False` desde `/` (no desde `/widget`) nunca es bloqueado — el flag solo restringe el canal de invitado/embebible.
+
+### [CS-025] Caché híbrida consciente de la configuración vigente del tema
+- **Estado:** `IMPLEMENTADO` (2026-08-20)
+- **Requisitos:**
+  - El namespace de caché (`cache_layer.py::_generate_cache_key`) debe incorporar, además del `profile_id`, los flags de `config_metadata` que cambian el CONTENIDO de la respuesta generada: `response_style`, `enable_clarifying_questions`, `enable_suggestions` (`cache_namespace = f"{profile_id}:{response_style}:{int(enable_clarifying_questions)}:{int(enable_suggestions)}"` en `chat_service.py`).
+  - La carga de `config_metadata` del perfil debe ocurrir ANTES del chequeo de caché (reordenado respecto al flujo previo), para poder construir ese namespace antes de la primera consulta a Redis.
+  - `HybridCacheLayer.store_response`/`get_with_fallback` deben persistir y restaurar `suggestions` igual que ya hacían con `sources` — un cache-hit debe devolver las mismas sugerencias que se generaron y cachearon junto con la respuesta original.
+- **Restricciones:**
+  - Ninguna funcionalmente nueva; el namespace más granular reduce en la práctica la tasa de aciertos de caché solo si un mismo tema cambia de configuración con frecuencia (caso raro — normalmente un admin fija una config y la deja estable).
+- **Criterios de Aceptación:**
+  - Misma pregunta exacta, `response_style=concise` primero y `response_style=detailed` después: la segunda llamada NO debe venir de caché (`provider` real de LLM, no `"cache"`), y debe diferir sustancialmente en longitud/tono de la primera.
+  - Repetir la pregunta con el MISMO `response_style` que una llamada previa sí debe pegar en caché (`provider: "cache"`) y traer `suggestions` no vacío si la respuesta original las tenía.
+- **Casos de Borde:**
+  - Verificado en vivo con las 3 llamadas encadenadas descritas arriba contra `mesa_ayuda` real: concise (621 chars, LLM real) → detailed (2222 chars, LLM real, NO cache) → concise repetida (621 chars, `provider: cache`, `suggestions` restauradas).
+
+### [CS-026] El widget nunca debe desbordarse horizontalmente de su contenedor
+- **Estado:** `IMPLEMENTADO` (2026-08-20)
+- **Requisitos:**
+  - Cualquier texto sin puntos de quiebre naturales (ej. un nombre de archivo largo en "Fuentes Oficiales") debe truncarse con elipsis dentro del ancho del widget, nunca desbordarlo visualmente.
+  - El contenedor de mensajes del chat debe tener `overflow-x: hidden` como barrera final, independiente de si algún contenido puntual logra evadir la regla anterior.
+- **Restricciones:**
+  - El elemento con `truncate` (Tailwind: `overflow:hidden; text-overflow:ellipsis; white-space:nowrap`) DEBE llevar también `min-w-0` cuando es hijo directo de un contenedor flex — sin eso, el mínimo de ancho de un flex item por defecto (`min-width:auto`, que para texto `nowrap` equivale a su ancho completo) impide que el truncado tenga efecto, sin importar que un ancestro más arriba sí tenga `min-w-0`.
+- **Criterios de Aceptación:**
+  - Un nombre de archivo largo sintético (`CA-PGO-D-E-05-Manual_de_usuario_Administracion_Privilegios_Muy_Largo.pdf`) renderiza con las clases `truncate`+`min-w-0` presentes en el span correspondiente (verificado en DOM real de test, no solo por inspección visual).
+- **Casos de Borde:**
+  - Reportado independientemente por dos personas en dos equipos distintos viendo el widget embebido en `teca-frontend-dev.teca.ca-smarts.com`; la causa real (bug de flexbox) solo se confirmó tras descartar por evidencia real (computed styles en DevTools: `transform: none`, `zoom: 1` en `body`/`app-root`) la hipótesis inicial de un `transform`/`zoom` heredado del layout Angular del sitio host.

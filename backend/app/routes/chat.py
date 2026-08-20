@@ -39,17 +39,17 @@ async def update_session_title(
         from app.infrastructure.repositories.chat_session_repository import PostgresChatSessionRepository
         repo = PostgresChatSessionRepository(db_session)
         session = await repo.find_by_id(session_id)
-        
+
         if not session:
             raise HTTPException(status_code=404, detail="Sesión no encontrada")
-        
+
         if str(session.user_id) != str(current_user["id"]):
             raise HTTPException(status_code=403, detail="No tienes permiso para modificar esta sesión")
-            
+
         session.title = request.title
         await repo.update(session)
         await db_session.commit()
-        
+
         return {
             "status": "success",
             "message": "Título de sesión actualizado correctamente"
@@ -70,7 +70,7 @@ async def create_chat_session(
     try:
         from app.infrastructure.repositories.chat_session_repository import PostgresChatSessionRepository
         from app.domain.entities.chat_session import ChatSession
-        
+
         repo = PostgresChatSessionRepository(db)
         new_session = ChatSession(
             user_id=str(current_user["id"]),
@@ -78,7 +78,7 @@ async def create_chat_session(
         )
         await repo.create(new_session)
         await db.commit()
-        
+
         return {
             "status": "success",
             "data": {
@@ -99,10 +99,10 @@ async def list_user_sessions(
     """Listar todas las sesiones del usuario autenticado"""
     try:
         from app.infrastructure.repositories.chat_session_repository import PostgresChatSessionRepository
-        
+
         repo = PostgresChatSessionRepository(db_session)
         sessions = await repo.find_by_user(str(current_user["id"]))
-        
+
         return {
             "status": "success",
             "data": {
@@ -140,12 +140,32 @@ async def chat_query(
         from app.domain.entities.chat_session import ChatSession
         import uuid
         from datetime import datetime
-        
+
         logger.info(f"🔵 Chat query from {current_user['email']}: {query.message[:80]}...")
-        
+
+        # ── Refuerzo de enable_widget_embed en el backend ────────────────────
+        # El candado de WidgetPage.jsx (frontend) bloquea el caso real de uso
+        # (widget.js embebido en un sitio de terceros), pero no una llamada directa
+        # a esta API con una sesión de invitado. Se rechaza aquí también para que
+        # una sesión de invitado (is_widget=True, ver auth_utils.py::get_current_user)
+        # no pueda usar un tema con enable_widget_embed=False, sin tocar en nada a
+        # usuarios autenticados normales (is_widget=False siempre pasa).
+        if current_user.get("is_widget"):
+            from app.infrastructure.models import ChatbotProfile
+            from sqlalchemy import select as _select
+            widget_profile_id = "general"
+            if query.filters:
+                widget_profile_id = query.filters.get("category") or query.filters.get("profile_id") or "general"
+            widget_profile = (await db_session.execute(
+                _select(ChatbotProfile).where(ChatbotProfile.id == widget_profile_id)
+            )).scalars().first()
+            if widget_profile and not (widget_profile.config_metadata or {}).get("enable_widget_embed", True):
+                raise HTTPException(status_code=403, detail="Este asistente no está disponible para uso embebido.")
+
+
         # ========== 1. CREAR O RECUPERAR SESIÓN ==========
         session_repo = PostgresChatSessionRepository(db_session)
-        
+
         # Si no tiene session_id, crear nueva
         if not query.session_id:
             query.session_id = str(uuid.uuid4())
@@ -156,7 +176,7 @@ async def chat_query(
             )
             await session_repo.create(new_session)
             logger.info(f"✅ Nueva sesión creada: {query.session_id}")
-        
+
         # Recuperar sesión existente o crear si no existe
         existing_session = await session_repo.find_by_id(query.session_id)
         if not existing_session:
@@ -167,15 +187,15 @@ async def chat_query(
                 title=query.message[:80] if query.message else "Consulta Widget"
             )
             await session_repo.create(new_session)
-        
+
         # ========== 2. GUARDAR MENSAJE DEL USUARIO INMEDIATAMENTE ==========
         from app.domain.entities.chat_session import ChatMessage
-        
+
         user_message = ChatMessage(
             role='user',
             content=query.message
         )
-        
+
         try:
             await session_repo.add_message(query.session_id, user_message)
             await db_session.commit()
@@ -184,7 +204,7 @@ async def chat_query(
             await db_session.rollback()
             logger.error(f"❌ Error crítico al guardar mensaje de usuario: {e}")
             # Continuamos aunque falle el guardado para no bloquear al usuario
-        
+
         # ========== 3. PROCESAR CONSULTA CON RAG + LLM ==========
         # Recuperar historial si no se proporcionó (para asegurar contexto)
         history = query.conversation_history or []
@@ -201,7 +221,7 @@ async def chat_query(
 
         # Obtener instancia del servicio
         chat_service = await get_chat_service()
-        
+
         # Procesar con el servicio de IA + caché
         result = await chat_service.process_query(
             query=query.message,
@@ -210,14 +230,14 @@ async def chat_query(
             db_session=db_session,
             filters=query.filters
         )
-        
+
         # ========== 4. GUARDAR RESPUESTA DEL ASISTENTE ==========
         # Limpieza de respuesta (Sufijo de depuración restaurado a petición del usuario)
         response_text = result.get("response", "")
         provider = result.get("provider")
-        if provider:
+        if provider and result.get("show_provider_debug", True):
             response_text += f"\n\n---\n*LLM: {provider}*"
-        elif result.get("from_cache") == "exact_or_similar":
+        elif result.get("from_cache") == "exact_or_similar" and result.get("show_provider_debug", True):
             response_text += f"\n\n---\n*LLM: Caché Híbrida*"
 
 
@@ -226,7 +246,7 @@ async def chat_query(
             content=response_text,
             sources=result.get("sources", [])
         )
-        
+
         try:
             await session_repo.add_message(query.session_id, assistant_message)
             await db_session.commit()
@@ -234,21 +254,21 @@ async def chat_query(
         except Exception as e:
             await db_session.rollback()
             logger.error(f"❌ Error al guardar respuesta del asistente: {e}")
-        
+
         # ========== 5. OBTENER HISTORIAL ACTUALIZADO ==========
         try:
             updated_messages = await session_repo.get_messages(query.session_id, limit=50)
         except Exception as e:
             logger.warning(f"⚠️ No se pudo obtener historial: {e}")
             updated_messages = []
-        
+
         # Log situación de caché
         from_cache = result.get("from_cache", "unknown")
         if from_cache == "exact_or_similar":
             logger.info(f"🟢 CACHE HIT: Respondiendo desde caché sin LLM")
         else:
             logger.info(f"🔴 CACHE MISS: Consultando LLM y guardando en caché")
-        
+
         # Retornar diccionario plano con el mismo formato que se guarda
         return {
             "status": "success",
@@ -256,6 +276,7 @@ async def chat_query(
                 "session_id": query.session_id,
                 "response": response_text,
                 "sources": result.get("sources", []),
+                "suggestions": result.get("suggestions", []),
                 "has_relevant_knowledge": result.get("has_relevant_info", False),
                 # Historial completo de la sesión
                 "conversation_history": [
@@ -278,6 +299,8 @@ async def chat_query(
                 }
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error en chat_query: {str(e)}")
         import traceback
@@ -295,20 +318,20 @@ async def get_session_details(
     """Obtener detalles completos de una sesión incluyendo historial"""
     try:
         from app.infrastructure.repositories.chat_session_repository import PostgresChatSessionRepository
-        
+
         repo = PostgresChatSessionRepository(db_session)
         session = await repo.find_by_id(session_id)
-        
+
         if not session:
             raise HTTPException(status_code=404, detail="Sesión no encontrada")
-        
+
         # Verificar que el usuario es propietario de la sesión
         if str(session.user_id) != str(current_user["id"]):
             raise HTTPException(status_code=403, detail="No tienes acceso a esta sesión")
-        
+
         # Obtener mensajes
         messages = await repo.get_messages(session_id, limit=100)
-        
+
         return {
             "status": "success",
             "data": {
@@ -342,21 +365,21 @@ async def delete_session(
     """Eliminar una sesión de chat"""
     try:
         from app.infrastructure.repositories.chat_session_repository import PostgresChatSessionRepository
-        
+
         repo = PostgresChatSessionRepository(db_session)
         session = await repo.find_by_id(session_id)
-        
+
         if not session:
             raise HTTPException(status_code=404, detail="Sesión no encontrada")
-        
+
         # Verificar que el usuario es propietario
         if str(session.user_id) != str(current_user["id"]):
             raise HTTPException(status_code=403, detail="No tienes permiso para eliminar esta sesión")
-        
+
         # Eliminar sesión
         success = await repo.delete(session_id)
         await db_session.commit()
-        
+
         if success:
             logger.info(f"✅ Sesión {session_id} eliminada por usuario {current_user['email']}")
             return {
@@ -365,7 +388,7 @@ async def delete_session(
             }
         else:
             raise HTTPException(status_code=500, detail="No se pudo eliminar la sesión")
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -410,7 +433,7 @@ async def record_message_feedback(
         msg.feedback_rating = request.rating
         if request.comment:
             msg.feedback_text = request.comment
-            
+
         await db_session.commit()
         logger.info(f"👍👎 Feedback '{request.rating}' registrado para mensaje {message_id}")
         return {"status": "success", "message": "Feedback registrado correctamente"}
@@ -439,7 +462,11 @@ async def get_chatbot_profile_public(profile_id: str, db_session: AsyncSession =
             "logo_url": "",
             "icon": "Bot",
             "welcome_message": "¡Hola! ¿En qué puedo apoyarle hoy?",
-            "primary_color": "#3b82f6"
+            "primary_color": "#3b82f6",
+            "show_sources": True,
+            "show_provider_debug": True,
+            "enable_feedback_buttons": True,
+            "enable_widget_embed": True
         }
     return {
         "id": profile.id,
@@ -449,5 +476,9 @@ async def get_chatbot_profile_public(profile_id: str, db_session: AsyncSession =
         "logo_url": profile.logo_url or "",
         "icon": profile.icon or "Bot",
         "welcome_message": profile.welcome_message or "¡Hola! ¿En qué puedo apoyarle hoy?",
-        "primary_color": profile.primary_color or "#004a87"
+        "primary_color": profile.primary_color or "#004a87",
+        "show_sources": (profile.config_metadata or {}).get("show_sources", True),
+        "show_provider_debug": (profile.config_metadata or {}).get("show_provider_debug", True),
+        "enable_feedback_buttons": (profile.config_metadata or {}).get("enable_feedback_buttons", True),
+        "enable_widget_embed": (profile.config_metadata or {}).get("enable_widget_embed", True)
     }

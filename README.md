@@ -57,6 +57,8 @@ Ver el manual de usuario `CA-CS-M-01_Manual_de_usuario_ConsultaSmart_Admin.docx`
 | Feedback de usuario | Votos "útil"/"no útil" por respuesta del chat, agregados en el panel de observabilidad. |
 | Observabilidad | Proveedores de IA activos, tasa de satisfacción y estado de la caché semántica. |
 | Gestión de usuarios y roles | Alta/baja del rol `admin` sobre cuentas de Authentik, con confirmación explícita. |
+| Personalización conversacional por tema | Interruptores independientes (`config_metadata`, sin migración de BD) para: preguntas de aclaración ante consultas ambiguas, sugerencias de seguimiento tras cada respuesta, estilo de respuesta (conciso/detallado), saludo vía LLM, mostrar/ocultar fuentes citadas y motor de IA usado, botones de feedback, y si el tema puede usarse desde el widget público embebible. Ver `SPECS.md` `[CS-023]`/`[CS-024]`. |
+| Dominios públicos dedicados por tema | Un tema puede servirse en un dominio propio (ej. `chat.<cliente>.ca-smarts.com`) con tenant fijo, sin selector visible y sin proyecto/deploy separado — configuración en `frontend/src/config/domainLock.js`. Ver `SPECS.md` `[CS-021]`. |
 
 ## 6. Acceso y Desarrollo
 

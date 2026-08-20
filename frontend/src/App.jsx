@@ -10,11 +10,12 @@ import WidgetPage from './pages/WidgetPage'
 import DocumentsPage from './pages/DocumentsPage'
 import ResultsPage from './pages/ResultsPage'
 import AdminPage from './pages/AdminPage'
+import { resolveAuthority } from './config/domainLock'
 
 
 const baseUrl = window.location.origin + import.meta.env.BASE_URL
 const oidcConfig = {
-    authority: "https://auth.casmart.internal/application/o/consulta-smart/",
+    authority: resolveAuthority(window.location.hostname),
     client_id: "consulta-smart",
     redirect_uri: baseUrl,
     post_logout_redirect_uri: baseUrl,
@@ -104,7 +105,7 @@ function AppContent() {
 export default function App() {
     return (
         <AuthProvider {...oidcConfig}>
-            <BrowserRouter 
+            <BrowserRouter
                 basename={import.meta.env.BASE_URL}
                 future={{
                     v7_startTransition: true,
@@ -116,4 +117,3 @@ export default function App() {
         </AuthProvider>
     )
 }
-

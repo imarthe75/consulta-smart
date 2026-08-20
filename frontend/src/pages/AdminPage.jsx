@@ -29,7 +29,8 @@ export default function AdminPage() {
         logo_url: '',
         icon: 'Bot',
         primary_color: '#3b82f6',
-        is_active: true
+        is_active: true,
+        config_metadata: {}
     })
     const [documents, setDocuments] = useState([])
     const [loading, setLoading] = useState(true)
@@ -191,6 +192,7 @@ export default function AdminPage() {
                     custom_base_url: active.custom_base_url || '',
                     version: active.version || 1,
                     is_active: active.is_active !== undefined ? active.is_active : true,
+                    config_metadata: active.config_metadata || {},
                     prompt_topic: active.prompt_topic || '',
                     prompt_description: active.prompt_description || '',
                     prompt_target_audience: active.prompt_target_audience || '',
@@ -1296,6 +1298,114 @@ export default function AdminPage() {
                                         placeholder="Mi función está limitada exclusivamente a la asesoría de trámites..."
                                         className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary dark:focus:ring-blue-500 text-slate-800 dark:text-slate-100"
                                     />
+                                </div>
+
+                                {/* Info de depuración visible al usuario final -- desactivar en
+                                    producción una vez validado el tema. Ambos por defecto
+                                    encendidos (comportamiento actual) hasta que se apaguen aquí
+                                    a propósito. */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-200 dark:border-slate-700">
+                                    <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={config.config_metadata?.show_provider_debug ?? true}
+                                            onChange={(e) => setConfig(prev => ({
+                                                ...prev,
+                                                config_metadata: { ...prev.config_metadata, show_provider_debug: e.target.checked }
+                                            }))}
+                                            className="w-4 h-4 accent-blue-600"
+                                        />
+                                        Mostrar motor de IA usado (debug)
+                                    </label>
+                                    <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={config.config_metadata?.show_sources ?? true}
+                                            onChange={(e) => setConfig(prev => ({
+                                                ...prev,
+                                                config_metadata: { ...prev.config_metadata, show_sources: e.target.checked }
+                                            }))}
+                                            className="w-4 h-4 accent-blue-600"
+                                        />
+                                        Mostrar fuentes oficiales citadas
+                                    </label>
+                                    <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={config.config_metadata?.enable_clarifying_questions ?? true}
+                                            onChange={(e) => setConfig(prev => ({
+                                                ...prev,
+                                                config_metadata: { ...prev.config_metadata, enable_clarifying_questions: e.target.checked }
+                                            }))}
+                                            className="w-4 h-4 accent-blue-600"
+                                        />
+                                        Hacer preguntas de aclaración si la consulta es ambigua
+                                    </label>
+                                    <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={config.config_metadata?.enable_suggestions ?? true}
+                                            onChange={(e) => setConfig(prev => ({
+                                                ...prev,
+                                                config_metadata: { ...prev.config_metadata, enable_suggestions: e.target.checked }
+                                            }))}
+                                            className="w-4 h-4 accent-blue-600"
+                                        />
+                                        Mostrar sugerencias de seguimiento tras cada respuesta
+                                    </label>
+                                    <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={config.config_metadata?.enable_feedback_buttons ?? true}
+                                            onChange={(e) => setConfig(prev => ({
+                                                ...prev,
+                                                config_metadata: { ...prev.config_metadata, enable_feedback_buttons: e.target.checked }
+                                            }))}
+                                            className="w-4 h-4 accent-blue-600"
+                                        />
+                                        Mostrar botones de feedback (👍/👎)
+                                    </label>
+                                    <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={config.config_metadata?.enable_widget_embed ?? true}
+                                            onChange={(e) => setConfig(prev => ({
+                                                ...prev,
+                                                config_metadata: { ...prev.config_metadata, enable_widget_embed: e.target.checked }
+                                            }))}
+                                            className="w-4 h-4 accent-blue-600"
+                                        />
+                                        Permitir embeber este tema en sitios de terceros (widget.js)
+                                    </label>
+                                    <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={config.config_metadata?.greeting_via_llm ?? false}
+                                            onChange={(e) => setConfig(prev => ({
+                                                ...prev,
+                                                config_metadata: { ...prev.config_metadata, greeting_via_llm: e.target.checked }
+                                            }))}
+                                            className="w-4 h-4 accent-blue-600"
+                                        />
+                                        Que el saludo ("hola") también pase por el LLM (más lento, más personalidad)
+                                    </label>
+                                    <div>
+                                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                            Estilo de respuesta
+                                        </label>
+                                        <select
+                                            value={config.config_metadata?.response_style || 'default'}
+                                            onChange={(e) => setConfig(prev => ({
+                                                ...prev,
+                                                config_metadata: { ...prev.config_metadata, response_style: e.target.value }
+                                            }))}
+                                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-100 outline-none"
+                                        >
+                                            <option value="default">Por defecto</option>
+                                            <option value="concise">Conciso (breve y directo)</option>
+                                            <option value="detailed">Detallado (explicativo)</option>
+                                        </select>
+                                    </div>
                                 </div>
                             </div>
                         </div>

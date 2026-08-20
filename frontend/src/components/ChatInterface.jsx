@@ -5,11 +5,12 @@ import { useChatStore } from '../stores/chatStore'
 import { useDocumentStore } from '../stores/documentStore'
 import { useAuthStore } from '../stores/authStore'
 import api, { chatAPI } from '../services/api'
-import { Send, Plus, Trash2, Edit2, Check, X, RefreshCcw, FileText, MessageSquare, LogOut, Search, Settings, BookOpen, Hash, ThumbsUp, ThumbsDown, Bot as BotIcon } from 'lucide-react'
+import { Send, Plus, Trash2, Edit2, Check, X, RefreshCcw, FileText, MessageSquare, LogOut, Search, Settings, BookOpen, Hash, ThumbsUp, ThumbsDown, Bot as BotIcon, Sparkles } from 'lucide-react'
 import clsx from 'clsx'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ICON_MAP } from '../constants/chatIcons'
+import { DOMAIN_LOCKED_PROFILE } from '../config/domainLock'
 
 /**
  * ChatInterface — Componente principal del Chatbot Inteligente (RAG).
@@ -54,6 +55,11 @@ export default function ChatInterface({ isWidget = false }) {
     const [tenantId, setTenantId] = useState('general')
     const [profileId, setProfileId] = useState('general')
 
+    // Si el dominio actual tiene un tenant fijo (ver domainLock.js), el chat
+    // no debe permitir cambiar de tema -- ignora `profile_id`/`tenant` de la
+    // URL y oculta el selector más abajo.
+    const lockedProfileId = DOMAIN_LOCKED_PROFILE[window.location.hostname]
+
     // Configuración estética y de branding del perfil activo (título, logo, color principal)
     const [profileConfig, setProfileConfig] = useState({
         title: 'Asistente',
@@ -61,7 +67,9 @@ export default function ChatInterface({ isWidget = false }) {
         logo_url: '',
         icon: 'Bot',
         welcome_message: '¡Hola! ¿En qué puedo apoyarle hoy?',
-        primary_color: '#3b82f6'
+        primary_color: '#3b82f6',
+        show_sources: true,
+        enable_feedback_buttons: true
     })
 
     // Estado local para recordar las valoraciones de feedback (thumbs up/down) enviadas
@@ -87,8 +95,8 @@ export default function ChatInterface({ isWidget = false }) {
      */
     useEffect(() => {
         const queryParams = new URLSearchParams(window.location.search);
-        const tid = queryParams.get('tenantId') || queryParams.get('tenant') || 'general';
-        const pid = queryParams.get('profile_id') || tid;
+        const tid = lockedProfileId || queryParams.get('tenantId') || queryParams.get('tenant') || 'general';
+        const pid = lockedProfileId || queryParams.get('profile_id') || tid;
         const customColor = queryParams.get('themeColor');
         const customTitle = queryParams.get('title');
 
@@ -112,7 +120,9 @@ export default function ChatInterface({ isWidget = false }) {
                         logo_url: response.data.logo_url || '',
                         icon: response.data.icon || 'Bot',
                         welcome_message: response.data.welcome_message || '¡Hola! ¿En qué puedo apoyarle hoy?',
-                        primary_color: customColor || response.data.primary_color || '#3b82f6'
+                        primary_color: customColor || response.data.primary_color || '#3b82f6',
+                        show_sources: response.data.show_sources ?? true,
+                        enable_feedback_buttons: response.data.enable_feedback_buttons ?? true
                     });
                 }
             } catch (err) {
@@ -145,7 +155,9 @@ export default function ChatInterface({ isWidget = false }) {
                     logo_url: res.data.logo_url || '',
                     icon: res.data.icon || 'Bot',
                     welcome_message: res.data.welcome_message || '¡Hola! ¿En qué puedo apoyarle hoy?',
-                    primary_color: res.data.primary_color || '#3b82f6'
+                    primary_color: res.data.primary_color || '#3b82f6',
+                    show_sources: res.data.show_sources ?? true,
+                    enable_feedback_buttons: res.data.enable_feedback_buttons ?? true
                 })
             }
         } catch (e) {
@@ -287,6 +299,7 @@ export default function ChatInterface({ isWidget = false }) {
                     role: 'assistant',
                     content: response.data.data.response,
                     sources: response.data.data.sources || [],
+                    suggestions: response.data.data.suggestions || [],
                     timestamp: new Date().toISOString(),
                 }
                 addMessage(assistantMessage)
@@ -304,10 +317,16 @@ export default function ChatInterface({ isWidget = false }) {
 
     /**
      * Envía la consulta ingresada por el usuario hacia el backend RAG.
+     * @param {Event} [e] - Evento del form (opcional -- ausente cuando se llama
+     *   programáticamente, ej. al hacer clic en un chip de sugerencia).
+     * @param {string} [overrideText] - Texto a enviar en vez del estado `input`
+     *   (necesario para los chips: `setInput(texto)` + llamar esta función no
+     *   funcionaría, `input` seguiría con el valor viejo hasta el próximo render).
      */
-    const sendMessage = async (e) => {
-        e.preventDefault()
-        if (!input.trim()) return
+    const sendMessage = async (e, overrideText) => {
+        e?.preventDefault()
+        const queryText = overrideText ?? input
+        if (!queryText.trim()) return
 
         let activeSessionId = currentSessionId;
         // `currentSessionId` es un cierre de este render — `setCurrentSessionId` de abajo
@@ -333,7 +352,7 @@ export default function ChatInterface({ isWidget = false }) {
         }
         const userMessage = {
             role: 'user',
-            content: input,
+            content: queryText,
             timestamp: new Date().toISOString(),
         }
 
@@ -345,7 +364,7 @@ export default function ChatInterface({ isWidget = false }) {
         try {
             const response = await chatAPI.sendQuery(
                 activeSessionId,
-                input,
+                queryText,
                 documents.map(d => d.id),
                 { "category": profileId }
             )
@@ -355,6 +374,7 @@ export default function ChatInterface({ isWidget = false }) {
                     role: 'assistant',
                     content: response.data.data.response,
                     sources: response.data.data.sources || [],
+                    suggestions: response.data.data.suggestions || [],
                     timestamp: new Date().toISOString(),
                 }
                 addMessage(assistantMessage)
@@ -435,21 +455,24 @@ export default function ChatInterface({ isWidget = false }) {
                             </div>
                         </div>
 
-                        {/* Selector dinámico de Perfiles de la BD */}
-                        <div>
-                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">
-                                Asistente Activo
-                            </label>
-                            <select
-                                value={profileId}
-                                onChange={(e) => handleSelectProfile(e.target.value)}
-                                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-                            >
-                                {availableProfiles.map(p => (
-                                    <option key={p.id} value={p.id}>{p.name} ({p.id})</option>
-                                ))}
-                            </select>
-                        </div>
+                        {/* Selector dinámico de Perfiles de la BD -- oculto en dominios
+                            con tenant fijo (ver domainLock.js) */}
+                        {!lockedProfileId && (
+                            <div>
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                                    Asistente Activo
+                                </label>
+                                <select
+                                    value={profileId}
+                                    onChange={(e) => handleSelectProfile(e.target.value)}
+                                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                                >
+                                    {availableProfiles.map(p => (
+                                        <option key={p.id} value={p.id}>{p.name} ({p.id})</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
 
                         {/* Botón de Nueva Sesión */}
                         <button
@@ -575,8 +598,11 @@ export default function ChatInterface({ isWidget = false }) {
                     )}
                 </div>
 
-                {/* Contenedor de Conversación */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                {/* Contenedor de Conversación -- overflow-x-hidden como barrera final: nada
+                    (nombres de archivo largos, texto sin espacios, etc.) debe poder
+                    desbordarse horizontalmente fuera del widget, pase lo que pase con el
+                    contenido de un mensaje individual. */}
+                <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-6">
                     {messages.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-center p-8 text-slate-400 space-y-4">
                             <div
@@ -614,8 +640,9 @@ export default function ChatInterface({ isWidget = false }) {
                                         </ReactMarkdown>
                                     </div>
 
-                                    {/* Renderizado de Fuentes Oficiales Citas */}
-                                    {msg.sources && msg.sources.length > 0 && (() => {
+                                    {/* Renderizado de Fuentes Oficiales Citas -- ocultable por tema
+                                        vía config_metadata.show_sources (panel admin) */}
+                                    {profileConfig.show_sources && msg.sources && msg.sources.length > 0 && (() => {
                                         const normalizeSources = (srcs) =>
                                             srcs.map(s =>
                                                 typeof s === 'string'
@@ -650,7 +677,7 @@ export default function ChatInterface({ isWidget = false }) {
                                                                 }}
                                                             >
                                                                 <FileText size={9} className="shrink-0 opacity-70" />
-                                                                <span className="truncate">
+                                                                <span className="truncate min-w-0">
                                                                     {src.title || src.filename || 'Documento oficial'}
                                                                 </span>
                                                                 {src.version_label && (
@@ -678,8 +705,37 @@ export default function ChatInterface({ isWidget = false }) {
                                         )
                                     })()}
 
-                                    {/* Botones de Feedback (Thumbs Up / Thumbs Down) */}
-                                    {msg.role === 'assistant' && (
+                                    {/* Sugerencias de seguimiento -- solo en el último mensaje del
+                                        asistente (para que los chips no se acumulen en mensajes
+                                        viejos según crece la conversación) y no mientras hay una
+                                        consulta en curso (evita disparar una segunda en paralelo). */}
+                                    {msg.role === 'assistant' &&
+                                        idx === messages.length - 1 &&
+                                        !loading &&
+                                        msg.suggestions && msg.suggestions.length > 0 && (
+                                        <div className="mt-5 pt-4 border-t border-slate-100 text-xs text-slate-500">
+                                            <div className="flex items-center gap-1.5 mb-3">
+                                                <Sparkles size={11} className="opacity-60" />
+                                                <span className="font-bold uppercase tracking-wider text-[10px]">También puedes preguntar</span>
+                                            </div>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {msg.suggestions.map((s, i) => (
+                                                    <button
+                                                        key={i}
+                                                        type="button"
+                                                        onClick={() => sendMessage(undefined, s)}
+                                                        className="px-2.5 py-1 rounded-full text-[11px] font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-colors text-left"
+                                                    >
+                                                        {s}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Botones de Feedback (Thumbs Up / Thumbs Down) -- ocultable
+                                        por tema vía config_metadata.enable_feedback_buttons */}
+                                    {msg.role === 'assistant' && profileConfig.enable_feedback_buttons && (
                                         <div className="mt-3 pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end space-x-2 text-xs text-slate-400">
                                             <span className="text-[10px] mr-1">¿Fue útil esta respuesta?</span>
                                             <button

@@ -167,7 +167,7 @@ class HybridCacheLayer:
             logger.error(f"Error en embedding similarity search: {e}")
             return None
 
-    async def store_response(self, query: str, response: str, sources: List[str] = None, namespace: str = "default"):
+    async def store_response(self, query: str, response: str, sources: List[str] = None, suggestions: List[str] = None, namespace: str = "default"):
         """
         Guardar respuesta en caché para futuras consultas
         Incluir embedding para búsqueda de similares
@@ -188,6 +188,7 @@ class HybridCacheLayer:
                 "query": query,
                 "response": response,
                 "sources": sources or [],
+                "suggestions": suggestions or [],
                 "embedding": embedding,
                 "timestamp": time.time(),
                 "ttl_minutes": self.redis_ttl // 60

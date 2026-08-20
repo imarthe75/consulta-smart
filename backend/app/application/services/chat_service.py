@@ -1,6 +1,7 @@
 
 import os
 import json
+import re
 import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -11,6 +12,54 @@ from app.infrastructure.models import SystemConfig
 from app.infrastructure.cache_layer import get_cache_instance
 from app.application.services.heuristics import heuristics
 from app.core.config import settings
+
+# ── Sufijos de comportamiento conversacional (aclaración / sugerencias) ─────
+# Se concatenan a `system_prompt` DESPUÉS de resolverlo (ver process_query), sin
+# importar si vino de BD (perfil con prompt propio) o del fallback genérico.
+# Deben permanecer agnósticos de dominio -- NUNCA texto específico de un tenant --
+# por la misma razón documentada en el fallback (incidente 2026-07-22, CLAUDE.md).
+# Cada uno es independiente y activable/desactivable por tema via
+# config_metadata.enable_clarifying_questions / .enable_suggestions (default: True
+# ambos, para no cambiar el comportamiento de ningún tema existente).
+CLARIFYING_QUESTIONS_SUFFIX = (
+    "\n\n### PROTOCOLO DE ACLARACIÓN (PRIORIDAD SECUNDARIA -- ÚSALO SOLO SI DE VERDAD HACE FALTA):\n"
+    "Antes de pedir aclaración, revisa primero si el contexto de documentos oficiales ya "
+    "recuperado contiene una respuesta clara y suficiente. Si SÍ la contiene, RESPONDE "
+    "directamente con esa información -- responder con lo que ya sabes SIEMPRE tiene prioridad "
+    "sobre preguntar. Pide aclaración ÚNICAMENTE cuando, incluso considerando los documentos "
+    "disponibles, la consulta sigue siendo AMBIGUA, INCOMPLETA o admite más de una "
+    "interpretación razonable que de verdad impide responder con precisión (ej. el documento "
+    "recuperado aplica a más de una jurisdicción/entidad/versión y no sabes cuál corresponde). "
+    "En ese caso, y solo en ese caso: NO adivines ni elijas una interpretación por tu cuenta, y "
+    "NO la rechaces como fuera de dominio -- responde ÚNICAMENTE con una pregunta breve y "
+    "concreta que pida el dato faltante (ej.: '¿Te refieres a Puebla o a Quintana Roo?'). Esta "
+    "regla NUNCA amplía tu dominio: si la ambigüedad es sobre si el tema mismo está o no "
+    "cubierto, siguen aplicando las REGLAS CRÍTICAS DE SEGURIDAD Y DOMINIO (rechazo educado), no "
+    "una pregunta de aclaración."
+)
+SUGGESTIONS_SUFFIX = (
+    "\n\n### PROTOCOLO DE SUGERENCIAS DE SEGUIMIENTO:\n"
+    "Al final de CADA respuesta (incluidas las preguntas de aclaración, si aplican), agrega en "
+    "su propia última línea, entre 2 y 4 preguntas breves de seguimiento dentro de tu dominio. "
+    "Formato EXACTO y OBLIGATORIO de esa línea (sin explicarla, sin bloques de código):\n"
+    "SUGERENCIAS_JSON: [\"pregunta corta 1\", \"pregunta corta 2\"]\n"
+    "Si no aplica ninguna, usa SUGERENCIAS_JSON: []\n"
+    "Debe ser JSON válido de una lista de strings, sin texto adicional antes ni después."
+)
+# Estilo de respuesta por tema (config_metadata.response_style, default "default" = sin
+# instrucción extra, no cambia el comportamiento de ningún tema existente).
+RESPONSE_STYLE_SUFFIXES = {
+    "concise": (
+        "\n\n### ESTILO DE RESPUESTA: CONCISO. Sé breve y directo -- ve al punto sin rodeos, "
+        "prioriza viñetas cortas sobre párrafos largos, evita repetir contexto que el usuario "
+        "ya conoce."
+    ),
+    "detailed": (
+        "\n\n### ESTILO DE RESPUESTA: DETALLADO. Sé completo y explicativo -- desarrolla "
+        "contexto, ejemplos y matices relevantes antes de concluir, sin omitir detalles útiles "
+        "aunque la respuesta sea más larga."
+    ),
+}
 
 class ChatService:
     """
@@ -49,6 +98,11 @@ class ChatService:
             system_prompt = None
             welcome_msg = "¡Hola! ¿En qué puedo apoyarle hoy?"
             profile_id = "general"  # Por defecto es el chatbot genérico
+            enable_clarifying_questions = True  # default: comportamiento actual (siempre activo)
+            enable_suggestions = True
+            greeting_via_llm = False  # default: comportamiento actual (atajo local de saludo)
+            response_style = "default"  # default | concise | detailed
+            show_provider_debug = True  # default: comportamiento actual (siempre visible)
 
             if filters:
                 if "category" in filters:
@@ -56,36 +110,15 @@ class ChatService:
                 elif "profile_id" in filters:
                     profile_id = filters["profile_id"]
 
-            # ── Caché híbrida (Redis + embeddings) ───────────────────────────
-            # HALLAZGO 2026-08-14: _get_cache() existía pero nunca se llamaba desde
-            # aquí -- la caché estaba completamente desconectada del flujo real, así
-            # que CADA consulta (incluso repetida palabra por palabra) pagaba el
-            # costo/latencia completo de RAG+LLM. Solo se usa para preguntas sin
-            # historial de conversación (primer turno): una respuesta cacheada de una
-            # pregunta aislada puede ser incorrecta si en realidad era una continuación
-            # contextual ("¿y eso cuánto cuesta?"), así que ese caso se excluye a
-            # propósito. `namespace=profile_id` aísla el caché por tenant (ver
-            # cache_layer.py::_generate_cache_key) para que una respuesta de un tema no
-            # se sirva jamás a otro tema con una pregunta similar/idéntica.
-            cache_hit = None
-            if not conversation_history:
-                try:
-                    cache = await self._get_cache()
-                    cache_hit = await cache.get_with_fallback(query, namespace=profile_id)
-                except Exception as cache_err:
-                    logger.warning(f"⚠️ Caché no disponible, continuando sin ella: {cache_err}")
-
-            if cache_hit and not cache_hit.get("needs_llm_refinement"):
-                logger.info(f"🟢 CACHE HIT ({profile_id}): {query[:50]}...")
-                return {
-                    "response": cache_hit.get("response", ""),
-                    "provider": "cache",
-                    "session_id": session_id,
-                    "sources": cache_hit.get("sources", []),
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "from_cache": "exact_or_similar",
-                }
-
+            # Se carga el perfil (system_prompt, welcome_msg y los flags de
+            # config_metadata) ANTES de tocar la caché -- HALLAZGO 2026-08-20: antes
+            # esto pasaba después del chequeo de caché, y la caché se indexaba solo
+            # por `profile_id`, sin saber nada de `response_style`/
+            # `enable_clarifying_questions`/`enable_suggestions`. Resultado: una
+            # pregunta cacheada con `response_style=concise` se servía tal cual a la
+            # misma pregunta con `response_style=detailed` (o viceversa) -- la
+            # respuesta cacheada nunca reflejaba la configuración vigente. Necesitamos
+            # estos flags ANTES del namespace de caché de abajo.
             if db_session:
                 try:
                     from sqlalchemy import select
@@ -99,8 +132,50 @@ class ChatService:
                             logger.debug(f"✨ Usando System Prompt dinámico del perfil: {profile_id}")
                         if profile.welcome_message:
                             welcome_msg = profile.welcome_message
+                        if profile.config_metadata:
+                            enable_clarifying_questions = profile.config_metadata.get("enable_clarifying_questions", True)
+                            enable_suggestions = profile.config_metadata.get("enable_suggestions", True)
+                            greeting_via_llm = profile.config_metadata.get("greeting_via_llm", False)
+                            response_style = profile.config_metadata.get("response_style", "default")
+                            show_provider_debug = profile.config_metadata.get("show_provider_debug", True)
                 except Exception as e:
                     logger.warning(f"⚠️ Error cargando perfil {profile_id} desde DB: {e}")
+
+            # Namespace de caché compuesto: además del tenant, incorpora los flags que
+            # cambian el CONTENIDO de la respuesta -- así un cache-hit nunca sirve una
+            # respuesta generada bajo una configuración distinta a la vigente.
+            cache_namespace = f"{profile_id}:{response_style}:{int(enable_clarifying_questions)}:{int(enable_suggestions)}"
+
+            # ── Caché híbrida (Redis + embeddings) ───────────────────────────
+            # HALLAZGO 2026-08-14: _get_cache() existía pero nunca se llamaba desde
+            # aquí -- la caché estaba completamente desconectada del flujo real, así
+            # que CADA consulta (incluso repetida palabra por palabra) pagaba el
+            # costo/latencia completo de RAG+LLM. Solo se usa para preguntas sin
+            # historial de conversación (primer turno): una respuesta cacheada de una
+            # pregunta aislada puede ser incorrecta si en realidad era una continuación
+            # contextual ("¿y eso cuánto cuesta?"), así que ese caso se excluye a
+            # propósito. `namespace=cache_namespace` aísla el caché por tenant Y por
+            # configuración vigente (ver comentario arriba y cache_layer.py::_generate_cache_key).
+            cache_hit = None
+            if not conversation_history:
+                try:
+                    cache = await self._get_cache()
+                    cache_hit = await cache.get_with_fallback(query, namespace=cache_namespace)
+                except Exception as cache_err:
+                    logger.warning(f"⚠️ Caché no disponible, continuando sin ella: {cache_err}")
+
+            if cache_hit and not cache_hit.get("needs_llm_refinement"):
+                logger.info(f"🟢 CACHE HIT ({cache_namespace}): {query[:50]}...")
+                return {
+                    "response": cache_hit.get("response", ""),
+                    "provider": "cache",
+                    "session_id": session_id,
+                    "sources": cache_hit.get("sources", []),
+                    "suggestions": cache_hit.get("suggestions", []),
+                    "show_provider_debug": show_provider_debug,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "from_cache": "exact_or_similar",
+                }
 
             is_custom = False
             if system_prompt:
@@ -144,14 +219,26 @@ class ChatService:
                     "Mantén respuestas compactas y densas. No menciones sitios web no oficiales; puedes citar portales de gobierno."
                 )
 
-            # 2. Filtro local de saludos
+            # 1.5 Sufijos de comportamiento conversacional -- se aplican sobre
+            # `system_prompt` (custom o fallback) según lo que cada tema haya
+            # activado en config_metadata (ambos True por defecto).
+            if enable_clarifying_questions:
+                system_prompt = f"{system_prompt}{CLARIFYING_QUESTIONS_SUFFIX}"
+            if enable_suggestions:
+                system_prompt = f"{system_prompt}{SUGGESTIONS_SUFFIX}"
+            if response_style in RESPONSE_STYLE_SUFFIXES:
+                system_prompt = f"{system_prompt}{RESPONSE_STYLE_SUFFIXES[response_style]}"
+
+            # 2. Filtro local de saludos -- desactivable por tema (greeting_via_llm) para que
+            # el saludo también pase por el LLM (más personalidad, más lento/costoso).
             clean_query = query.lower().strip()
             greetings = ['hola', 'buenos dias', 'buenos días', 'buenas tardes', 'buenas noches', 'saludos', 'que tal', 'quien eres']
-            if len(clean_query.split()) <= 3 and any(greet in clean_query for greet in greetings):
+            if not greeting_via_llm and len(clean_query.split()) <= 3 and any(greet in clean_query for greet in greetings):
                 return {
                     "response": welcome_msg,
                     "session_id": session_id,
                     "provider": "Sistema Local (Saludo)",
+                    "suggestions": [],
                     "timestamp": datetime.utcnow().isoformat()
                 }
 
@@ -172,6 +259,8 @@ class ChatService:
             custom_llm_model = None
             custom_llm_api_key = None
             custom_llm_base_url = None
+            # show_provider_debug ya se leyó en el primer bloque de carga del perfil
+            # (arriba, antes del namespace de caché) -- no se vuelve a leer aquí.
 
             if db_session:
                 try:
@@ -198,6 +287,7 @@ class ChatService:
                         "response": rejection_text,
                         "session_id": session_id,
                         "provider": "Sistema Local (Guardrail Tópico Prohibido)",
+                        "suggestions": [],
                         "timestamp": datetime.utcnow().isoformat()
                     }
 
@@ -212,6 +302,7 @@ class ChatService:
                                 "response": config.get("rejection_templates", {}).get("forbidden", rejection_text),
                                 "session_id": session_id,
                                 "provider": "Sistema Local (Guardrail Archivo)",
+                                "suggestions": [],
                                 "timestamp": datetime.utcnow().isoformat()
                             }
 
@@ -230,30 +321,49 @@ class ChatService:
             # 5. Traducción Semántica (RAG Rewrite) - OPTIMIZADO
             logger.info("🚧 CP-1: Entrando a Rewriter")
             llm = await self._get_llm()
-            search_query = query
+
+            # HALLAZGO 2026-08-20: si el turno anterior fue una pregunta de aclaración
+            # del propio asistente (ver CLARIFYING_QUESTIONS_SUFFIX) y el usuario
+            # responde corto ("Puebla"), la búsqueda RAG de ese turno buscaba
+            # ÚNICAMENTE "Puebla" -- perdía el tema original y degradaba la
+            # recuperación justo en el turno inmediato después de aclarar. Se
+            # antepone el contexto reciente de la conversación (últimos 2 mensajes)
+            # a la query de búsqueda para que retenga el tema aunque la respuesta
+            # del usuario sea muy corta. `query` (sin contexto) se deja intacto para
+            # todo lo demás (mensaje al LLM, caché, guardado en BD).
+            search_base_query = query
+            if conversation_history:
+                recent_context = " ".join(
+                    m.get("content", "") for m in conversation_history[-2:] if m.get("content")
+                ).strip()
+                if recent_context:
+                    search_base_query = f"{recent_context} {query}"
+                    logger.info(f"🧵 Contexto de conversación agregado a la búsqueda RAG: '{search_base_query[:120]}...'")
+
+            search_query = search_base_query
 
             # Boost query con entidades críticas
             if h_entities:
-                search_query = f"{' '.join(h_entities)} {query}"
+                search_query = f"{' '.join(h_entities)} {search_base_query}"
                 logger.info(f"🚀 Boosting query con entidades: {h_entities}")
 
-            # Solo reescribir si la consulta es compleja (> 3 palabras) y no es personalizado
-            if len(query.split()) > 3 and not is_custom:
+            # Solo reescribir si la consulta (con contexto) es compleja (> 3 palabras) y no es personalizado
+            if len(search_base_query.split()) > 3 and not is_custom:
                 try:
-                    rewrite_prompt = f"Como experto RPP, traduce esta frase ciudadana a términos técnicos de búsqueda registral (solo el resultado): '{query}'"
+                    rewrite_prompt = f"Como experto RPP, traduce esta frase ciudadana a términos técnicos de búsqueda registral (solo el resultado): '{search_base_query}'"
                     # Timeout agresivo de 5s para el rewriter: es mejor una búsqueda subóptima que un timeout total
                     res, _ = await asyncio.wait_for(
                         llm.chat([{"role": "user", "content": rewrite_prompt}], temperature=0, system=system_prompt),
                         timeout=5.0
                     )
                     search_query = res.strip().replace('"', '')
-                    logger.info(f"🧠 Rewriter: '{query}' -> '{search_query}'")
+                    logger.info(f"🧠 Rewriter: '{search_base_query}' -> '{search_query}'")
                 except asyncio.TimeoutError:
                     logger.warning("⏱️ Rewriter TIMEOUT: Usando query original para no retrasar respuesta")
-                    search_query = query
+                    search_query = search_base_query
                 except Exception as e:
                     logger.warning(f"⚠️ Error rewriter: {e}")
-                    search_query = query
+                    search_query = search_base_query
             else:
                 logger.info("⏩ Skip Rewriter: Consulta simple o modo personalizado")
 
@@ -338,6 +448,23 @@ class ChatService:
             else:
                 answer, provider = await llm.chat(messages=messages, system=system_prompt)
 
+            # 6.5 Extracción de sugerencias de seguimiento (mismo patrón defensivo que
+            # _verify_grounding: intento de parseo con try/except, degradando a lista
+            # vacía sin nunca romper el turno de chat si el LLM no siguió el formato).
+            # Se hace ANTES del Blindaje de Alucinaciones para que el auditor no vea el
+            # marcador como ruido, y para que las sugerencias sobrevivan intactas si el
+            # Blindaje reemplaza `answer` por `corrected_answer` más abajo.
+            suggestions: List[str] = []
+            sug_match = re.search(r'SUGERENCIAS_JSON:\s*(\[.*\])\s*$', answer, re.IGNORECASE | re.DOTALL)
+            if sug_match:
+                try:
+                    parsed_suggestions = json.loads(sug_match.group(1))
+                    if isinstance(parsed_suggestions, list):
+                        suggestions = [str(s).strip() for s in parsed_suggestions if str(s).strip()][:4]
+                except Exception as sug_err:
+                    logger.warning(f"⚠️ No se pudo parsear sugerencias de seguimiento: {sug_err}")
+                answer = answer[:sug_match.start()].rstrip()
+
             # 7. Blindaje de Alucinaciones (Grounding Verification)
             if settings.STRICT_GROUNDING and relevant_docs:
                 logger.info("🛡️ Iniciando Blindaje (Grounding Check)...")
@@ -398,7 +525,8 @@ class ChatService:
                     await cache.store_response(
                         query, answer,
                         sources=[s["filename"] for s in sources],
-                        namespace=profile_id,
+                        suggestions=suggestions,
+                        namespace=cache_namespace,
                     )
                 except Exception as cache_err:
                     logger.warning(f"⚠️ No se pudo guardar en caché: {cache_err}")
@@ -408,6 +536,8 @@ class ChatService:
                 "provider": f"{provider} (RAG)" if relevant_docs else f"{provider} (General)",
                 "session_id": session_id,
                 "sources": sources,
+                "suggestions": suggestions,
+                "show_provider_debug": show_provider_debug,
                 "timestamp": datetime.utcnow().isoformat()
             }
 
@@ -419,6 +549,7 @@ class ChatService:
                 "response": f"Lo siento, ocurrió un error interno al procesar su consulta: {str(e)}",
                 "session_id": session_id,
                 "provider": "Sistema de Emergencia",
+                "suggestions": [],
                 "timestamp": datetime.utcnow().isoformat(),
                 "error": True
             }

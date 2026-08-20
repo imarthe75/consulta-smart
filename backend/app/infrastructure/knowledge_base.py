@@ -81,15 +81,27 @@ class KnowledgeBase:
                 "is_active": True
             }
 
+            # HALLAZGO 2026-08-19: a diferencia de search_in_knowledge_text_async, esta
+            # búsqueda vectorial nunca aplicaba filters["category"] -- el RAG semántico
+            # devolvía chunks de CUALQUIER tema/tenant (ej. documentos de "rpp"/"ircep"
+            # apareciendo como fuente en el chat de "teca"), fuga de contenido entre
+            # tenants confirmada en producción. Se agrega el mismo filtro que ya usa la
+            # búsqueda por texto.
+            vector_filter_clauses = ["d.is_active = :is_active", "dc.embedding IS NOT NULL"]
+            if filters.get("category"):
+                vector_filter_clauses.append("d.category = :category")
+                params["category"] = filters["category"]
+            vector_where_stmt = " AND ".join(vector_filter_clauses)
+
             # Consulta SQL optimizada exponiendo chunk_number y version_label para las citas de fuente
-            sql_vector = text("""
+            sql_vector = text(f"""
                 SELECT
                     dc.id, dc.text, d.title, d.category, d.version_label,
                     (dc.embedding <=> CAST(:query_embedding AS vector)) as distance,
                     dc.chunk_number, d.id as document_id
                 FROM document_chunks dc
                 JOIN documents d ON dc.document_id = d.id
-                WHERE d.is_active = :is_active AND dc.embedding IS NOT NULL
+                WHERE {vector_where_stmt}
                 ORDER BY distance
                 LIMIT :top_k
             """)
@@ -204,6 +216,9 @@ class KnowledgeBase:
                 if filters.get("is_active") is not None:
                     where_clauses_ilike.append("d.is_active = :is_active")
 
+                if filters.get("category"):
+                    where_clauses_ilike.append("d.category = :category")
+
                 where_str_ilike = " AND ".join(where_clauses_ilike)
 
                 sql_query = text(f"""
@@ -223,6 +238,8 @@ class KnowledgeBase:
                 params_ilike["top_k"] = top_k
                 if filters.get("is_active") is not None:
                     params_ilike["is_active"] = filters["is_active"]
+                if filters.get("category"):
+                    params_ilike["category"] = filters["category"]
 
                 result = await session.execute(sql_query, params_ilike)
                 rows = result.fetchall()
